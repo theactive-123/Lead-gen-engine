@@ -1,4 +1,6 @@
-import { QUEUES, closeDb, env, logger, migrate, queue, stopQueue } from '@lead/shared';
+import { QUEUES, closeDb, db, ensureQueue, env, logger, migrate, queue, stopQueue } from '@lead/shared';
+import { SOURCES } from './sources/index.js';
+import { runSource } from './sources/runner.js';
 import { beat, diskUsage, heartbeat, lakeSelftest } from './jobs/system.js';
 
 /**
@@ -32,6 +34,17 @@ await boss.work<{ rows?: number }>(
   { localConcurrency: Math.min(concurrency, 2) },
   logged<{ rows?: number }>(QUEUES.lakeSelftest, (d) => lakeSelftest(d ?? {})),
 );
+
+// Sources: one queue per source ("source.<key>"), scheduled from the `sources` table.
+const sourceRows = (await db().query<{ key: string; schedule: string; enabled: boolean }>('SELECT key, schedule, enabled FROM sources')).rows;
+for (const row of sourceRows) {
+  if (!SOURCES[row.key]) continue;
+  const name = `source.${row.key}`;
+  await ensureQueue(boss, name, { exclusive: true, expireInSeconds: 6 * 60 * 60 });
+  await boss.work(name, logged(name, () => runSource(row.key)));
+  if (row.enabled) await boss.schedule(name, row.schedule);
+  else await boss.unschedule(name).catch(() => {});
+}
 
 // Recurring jobs (cron, UTC). pg-boss makes sure only one worker runs each tick.
 await boss.schedule(QUEUES.heartbeat, '* * * * *');

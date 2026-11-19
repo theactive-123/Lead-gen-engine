@@ -13,14 +13,30 @@ export function lakeDir(...parts: string[]): string {
   return path.resolve(env().LAKE_DIR, ...parts);
 }
 
-let instance: DuckDBInstance | undefined;
+let instance: Promise<DuckDBInstance> | undefined;
 
-/** In-memory DuckDB with the httpfs extension (needed to query Common Crawl over HTTPS). */
-export async function duck(): Promise<DuckDBConnection> {
-  if (!instance) {
-    instance = await DuckDBInstance.create(':memory:', { threads: '4', memory_limit: '2GB' });
+async function createInstance(): Promise<DuckDBInstance> {
+  const inst = await DuckDBInstance.create(':memory:', {
+    threads: String(env().DUCKDB_THREADS),
+    memory_limit: env().DUCKDB_MEMORY_LIMIT,
+  });
+  const con = await inst.connect();
+  try {
+    // httpfs lets DuckDB read Parquet over HTTPS (Common Crawl). Installed once, then cached on disk.
+    await con.run('INSTALL httpfs');
+    await con.run('LOAD httpfs');
+    const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
+    if (proxy) await con.run(`SET http_proxy = ${sqlString(proxy.replace(/^https?:\/\//, ''))}`);
+  } finally {
+    con.closeSync();
   }
-  return instance.connect();
+  return inst;
+}
+
+/** In-memory DuckDB with the httpfs extension loaded (shared by the whole process). */
+export async function duck(): Promise<DuckDBConnection> {
+  instance ??= createInstance();
+  return (await instance).connect();
 }
 
 export function today(): string {
@@ -39,13 +55,14 @@ function sqlString(s: string): string {
 export async function writeParquet(
   dataset: string,
   rows: Record<string, unknown>[],
-  opts: { dt?: string; columns?: Record<string, string> } = {},
+  opts: { dt?: string; columns?: Record<string, string>; name?: string } = {},
 ): Promise<{ file: string; rows: number }> {
   if (rows.length === 0) return { file: '', rows: 0 };
   const dir = lakeDir(dataset, `dt=${opts.dt ?? today()}`);
   await mkdir(dir, { recursive: true });
-  const id = randomUUID();
-  const tmp = path.join(dir, `.staging-${id}.ndjson`);
+  // A fixed `name` makes writes idempotent: re-running the same batch overwrites the same file.
+  const id = opts.name ?? randomUUID();
+  const tmp = path.join(dir, `.staging-${id}-${randomUUID()}.ndjson`);
   const file = path.join(dir, `part-${id}.parquet`);
   await writeFile(tmp, rows.map((r) => JSON.stringify(r)).join('\n'));
   const con = await duck();
@@ -54,11 +71,12 @@ export async function writeParquet(
       ? `, columns={${Object.entries(opts.columns).map(([k, v]) => `${sqlString(k)}: ${sqlString(v)}`).join(', ')}}`
       : '';
     // Written to a temp name, then renamed: readers never see half-written files.
+    const tmpOut = `${file}.${randomUUID()}.tmp`;
     await con.run(
       `COPY (SELECT * FROM read_json(${sqlString(tmp)}, format='newline_delimited'${cols}))
-       TO ${sqlString(file + '.tmp')} (FORMAT parquet, COMPRESSION zstd)`,
+       TO ${sqlString(tmpOut)} (FORMAT parquet, COMPRESSION zstd)`,
     );
-    await rename(file + '.tmp', file);
+    await rename(tmpOut, file);
   } finally {
     con.closeSync();
     await rm(tmp, { force: true });

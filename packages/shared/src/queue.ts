@@ -30,21 +30,7 @@ export async function queue(): Promise<PgBoss> {
   b.on('error', (err) => logger.error({ err }, 'queue error'));
   await b.start();
   await b.createQueue(DEAD_LETTER).catch(() => {});
-  for (const name of Object.values(QUEUES)) {
-    const options = {
-      deadLetter: DEAD_LETTER,
-      retryLimit: 3,
-      retryDelay: 30,
-      retryBackoff: true,
-      // Upper bound for one job; long stage batches may run for a while.
-      expireInSeconds: EXPIRE_SECONDS[name] ?? 2 * 60 * 60,
-      // Workers refresh this automatically while a job runs. If a worker dies,
-      // its job is retried after ~30-60s instead of waiting for the expiry above.
-      heartbeatSeconds: 30,
-    };
-    if (await b.getQueue(name)) await b.updateQueue(name, options);
-    else await b.createQueue(name, options);
-  }
+  for (const name of Object.values(QUEUES)) await ensureQueue(b, name);
   boss = b;
   return b;
 }
@@ -52,4 +38,29 @@ export async function queue(): Promise<PgBoss> {
 export async function stopQueue(): Promise<void> {
   await boss?.stop({ graceful: true });
   boss = undefined;
+}
+
+/**
+ * Create a queue (or update its settings if it exists).
+ * `exclusive` = at most one waiting/running job: used for sources so a scheduled tick
+ * is skipped while the previous run is still going.
+ */
+export async function ensureQueue(
+  b: PgBoss,
+  name: string,
+  opts: { exclusive?: boolean; expireInSeconds?: number } = {},
+): Promise<void> {
+  const options = {
+    deadLetter: DEAD_LETTER,
+    retryLimit: 3,
+    retryDelay: 30,
+    retryBackoff: true,
+    // Upper bound for one job; long stage batches may run for a while.
+    expireInSeconds: opts.expireInSeconds ?? EXPIRE_SECONDS[name] ?? 2 * 60 * 60,
+    // Workers refresh this automatically while a job runs. If a worker dies,
+    // its job is retried after ~30-60s instead of waiting for the expiry above.
+    heartbeatSeconds: 30,
+  };
+  if (await b.getQueue(name)) await b.updateQueue(name, options);
+  else await b.createQueue(name, { ...options, ...(opts.exclusive ? { policy: 'exclusive' as const } : {}) });
 }

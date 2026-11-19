@@ -4,7 +4,7 @@ A free, self-hosted engine that collects business websites from public data sour
 enriches them (tech stack, store size, niche, contacts, site quality) and turns them into
 scored leads for each of your brands. No API keys, no paid services.
 
-> Status: **Phase 1 (Foundation)** done. See `docs/PROGRESS.md` for what is built and verified.
+> Status: **Phase 2 (Volume sources)** done. See `docs/PROGRESS.md` for what is built and verified.
 
 ---
 
@@ -55,6 +55,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Database login, only used inside this machine | `lead` / `lead` / `lead` |
 | `CRAWLER_CONTACT_EMAIL` | Shown to website owners in every request so they can reach you. Use a separate inbox. | placeholder |
 | `WORKER_CONCURRENCY` | Jobs one worker process runs at once | `4` |
+| `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` | Memory and CPU threads for bulk data scans. Lower on small machines | `2GB` / `4` |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
 
@@ -72,6 +73,29 @@ table and will be editable from the dashboard (Settings page, Phase 9).
 | See job queues | `docker compose exec worker pnpm --filter @lead/worker jobs list` |
 | Run a job now | `docker compose exec worker pnpm --filter @lead/worker jobs run system.lake-selftest '{"rows":1000000}'` |
 | Run more workers (more speed) | `docker compose up -d --scale worker=3` |
+
+---
+
+## Data sources (all free, no keys)
+
+| Source | What it gives | Schedule (UTC) |
+|---|---|---|
+| `commoncrawl` | Domains from the monthly Common Crawl index that have shop, booking or agency pages (patterns in the `source_url_signals` table) | daily 04:23 (only new index files are scanned) |
+| `ct` | Domains that just got an HTTPS certificate (= site going live), from Certificate Transparency logs | every 10 min |
+| `whoisds` | Newly registered domains (free daily list, capped at 70,000/day) | every 6 h |
+| `tranco` | Top 1 million sites (used later to spot big brands and estimate size) | daily 03:17 |
+
+Every source writes to `data/lake/candidates/dt=<day>/` and remembers where it stopped (the `checkpoints` table),
+so it continues after a restart. Turn a source on/off or change its options in the `sources` table
+(dashboard page in Phase 9).
+
+Useful commands:
+
+| Want to… | Run |
+|---|---|
+| Check every source is reachable | `docker compose exec worker pnpm --filter @lead/worker jobs health` |
+| Run a source now | `docker compose exec worker pnpm --filter @lead/worker jobs source whoisds` |
+| See the volume report | `docker compose exec worker pnpm --filter @lead/worker exec tsx src/reports/phase2.ts` |
 
 ---
 

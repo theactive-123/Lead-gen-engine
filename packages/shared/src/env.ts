@@ -11,6 +11,8 @@ const schema = z.object({
   CRAWLER_CONTACT_EMAIL: z.string().default('crawler-contact@example.invalid'),
   CRAWLER_NAME: z.string().default('LeadEngineBot'),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  DUCKDB_MEMORY_LIMIT: z.string().default('2GB'),
+  DUCKDB_THREADS: z.coerce.number().int().positive().default(4),
 });
 
 export type Env = z.infer<typeof schema>;

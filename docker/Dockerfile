@@ -21,6 +21,11 @@ RUN --mount=type=secret,id=ca,required=false \
 FROM deps AS worker
 COPY packages packages
 COPY apps/worker apps/worker
+# Pre-install DuckDB's httpfs extension (reads Common Crawl Parquet over HTTPS).
+RUN --mount=type=secret,id=ca,required=false \
+    cd apps/worker && SSL_CERT_FILE=$( [ -f /run/secrets/ca ] && echo /run/secrets/ca || echo /etc/ssl/certs/ca-certificates.crt ) \
+    node -e "require('@duckdb/node-api').DuckDBInstance.create(':memory:').then(i=>i.connect()).then(c=>c.run('INSTALL httpfs')).then(()=>console.log('httpfs installed'))" \
+    || echo "httpfs will be installed on first use"
 ENV NODE_ENV=production
 CMD ["pnpm", "--filter", "@lead/worker", "start"]
 

@@ -28,6 +28,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CRAWLER_CONTACT_EMAIL: ${CRAWLER_CONTACT_EMAIL:-crawler-contact@example.invalid}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
     volumes:
       - ./data:/data
 
