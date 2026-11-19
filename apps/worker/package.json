@@ -1,0 +1,16 @@
+{
+  "name": "@lead/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "migrate": "tsx src/migrate.ts",
+    "jobs": "tsx src/cli.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@lead/shared": "workspace:*",
+    "tsx": "^4.23.15"
+  }
+}

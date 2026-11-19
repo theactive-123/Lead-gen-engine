@@ -1,0 +1,19 @@
+{
+  "name": "lead-engine",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "migrate": "pnpm --filter @lead/worker migrate",
+    "worker": "pnpm --filter @lead/worker start",
+    "jobs": "pnpm --filter @lead/worker jobs",
+    "web": "pnpm --filter @lead/web dev",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.1.1"
+  }
+}

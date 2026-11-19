@@ -1,0 +1,44 @@
+# Start everything:  docker compose up -d --build
+# Dashboard:         http://localhost:3000   (on a server: http://SERVER-IP:3000)
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lead}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lead}
+      POSTGRES_DB: ${POSTGRES_DB:-lead}
+    command: ["postgres", "-c", "shared_buffers=512MB", "-c", "max_connections=100"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # only reachable from this machine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lead}"]
+      interval: 5s
+      retries: 20
+
+  worker:
+    build: { context: ., dockerfile: docker/Dockerfile, target: worker }
+    restart: unless-stopped
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-lead}:${POSTGRES_PASSWORD:-lead}@postgres:5432/${POSTGRES_DB:-lead}
+      LAKE_DIR: /data/lake
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CRAWLER_CONTACT_EMAIL: ${CRAWLER_CONTACT_EMAIL:-crawler-contact@example.invalid}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+    volumes:
+      - ./data:/data
+
+  web:
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    restart: unless-stopped
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-lead}:${POSTGRES_PASSWORD:-lead}@postgres:5432/${POSTGRES_DB:-lead}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
