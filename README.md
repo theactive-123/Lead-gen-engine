@@ -56,6 +56,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `CRAWLER_CONTACT_EMAIL` | Shown to website owners in every request so they can reach you. Use a separate inbox. | placeholder |
 | `WORKER_CONCURRENCY` | Jobs one worker process runs at once | `4` |
 | `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` | Memory and CPU threads for bulk data scans. Lower on small machines | `2GB` / `4` |
+| `DUCKDB_MAX_TEMP` | Most disk DuckDB may use for very big queries (a query fails and retries instead of filling the disk) | `4GB` |
 | `DNS_MODE` | Empty = use the dashboard setting (`udp`, fastest). `doh` = DNS over HTTPS, only if your network blocks normal DNS | empty |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
