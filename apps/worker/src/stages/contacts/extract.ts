@@ -71,7 +71,7 @@ const NAME = `${WORD}(?:\\s+${WORD}){1,2}(?![A-Za-z])`;
 const PERSON_PATTERNS: { re: RegExp; title: string | null; confidence: number }[] = [
   // "founded (and led) (in 2019) by (Sheng and) Jeff Auksel"
   { re: new RegExp(`\\b(?:[Ff]ounded|[Ss]tarted|[Ee]stablished|[Cc]reated|[Oo]wned)(?:\\s+and\\s+(?:led|run|owned|operated))?(?:\\s+in\\s+\\d{4})?\\s+by\\s+(?:${WORD}\\s+(?:and|&)\\s+)?(${NAME})`, 'g'), title: 'Founder', confidence: 0.8 },
-  { re: new RegExp(`\\b(${NAME}),?\\s+(?:is\\s+)?(?:the\\s+|our\\s+)?([Cc]o-?[Ff]ounder|[Ff]ounder|[Oo]wner|CEO|[Mm]anaging [Dd]irector)\\b`, 'g'), title: null, confidence: 0.7 },
+  { re: new RegExp(`\\b(${NAME}),?\\s+(?:is\\s+)?(?:the\\s+|our\\s+)?([Cc]o-?[Ff]ounder|[Ff]ounder|[Oo]wner|CEO|[Mm]anaging [Dd]irector)\\b`, 'g'), title: null, confidence: 0.6 },
   { re: new RegExp(`\\b([Cc]o-?[Ff]ounder|[Ff]ounder|[Oo]wner|CEO)\\s*(?:&\\s*[A-Za-z ]{2,20})?\\s*[:–—-]\\s*(${NAME})`, 'g'), title: null, confidence: 0.7 },
 ];
 const NOT_NAMES = /^(Our|The|We|Us|Home|About|Contact|Shop|Team|Store|Meet|Welcome|Founded|Learn|Read|More|Click|Hello|Thank|Thanks|New|Best|Free|All|Get|Join|Follow|Copyright|Privacy|Terms|Customer|Service|Brand|Company|Family|Business|Small|Local|United|North|South|East|West|Saint|Mount|Lake|New York|Los Angeles|San)\b/;
@@ -88,13 +88,24 @@ const typeOf = (o: Record<string, any>) => (Array.isArray(o['@type']) ? o['@type
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() || null : null);
 
 /** Extract everything from one page. `defaultCountry` helps read local phone numbers. */
-const COMPANY_WORDS = /\b(Limited|Ltd|LLC|L\.L\.C|Inc|Incorporated|Corp|Corporation|Company|Co|Group|Holdings|GmbH|AG|Pty|PLC|LLP|SAS|BV|Studio|Studios|Agency|Media|Labs|Essentials|Enterprises|Industries|Solutions|Services|Store|Shop|Brands?)\b/;
+const COMPANY_WORDS = /\b(Business|Limited|Ltd|LLC|L\.L\.C|Inc|Incorporated|Corp|Corporation|Company|Co|Group|Holdings|GmbH|AG|Pty|PLC|LLP|SAS|BV|Studio|Studios|Agency|Media|Labs|Essentials|Enterprises|Industries|Solutions|Services|Store|Shop|Brands?)\b/;
 const LEADING_ROLE = /^(?:(?:Co-?)?[Ff]ounders?|[Oo]wners?|CEO|Directors?)\s+/;
 
-/** A person's name, or null when it is a role word or a company name (seen: "Google Ireland Limited" on a privacy page). */
+// Capitalised heading / button / label words that precede names on real pages
+// (seen: "Experts Curt Hargrove", "Leadership Michelle Carroll", "Submit Jarrid Mendelson", "History More John").
+const HEADING_WORDS = new Set(('Experts Expert History More Leadership Now Submit Independent Business Read Learn Message Note Bio Biography Profile ' +
+  'Director Directors Management Board Staff Partner Partners Executive Executives Team Meet Story Mission Vision Values Testimonial Testimonials ' +
+  'Review Reviews Quote Award Awards Winner Founder Founders Owner Owners Our The About Contact Home Welcome Hello Hi Dear Behind Leader Leaders ' +
+  'Visionary Principal Head Chief Senior Lead Manager Consultant Coach Trainer Designer Developer Photographer Artist Author Speaker Chef ' +
+  'Meet-the-team Introducing Featuring Presenting Questions Call Email Phone Address Hours Location Locations Services Products Shop Book Today')
+  .split(/\s+/));
+
+/** A person's name, or null when it is a role/heading word or a company name (seen: "Google Ireland Limited" on a privacy page). */
 export function cleanPersonName(raw: string): string | null {
-  const name = raw.replace(LEADING_ROLE, '').trim();
-  if (name.split(/\s+/).length < 2 || name.split(/\s+/).length > 3) return null;
+  const words = raw.replace(LEADING_ROLE, '').trim().split(/\s+/);
+  while (words.length && HEADING_WORDS.has(words[0]!)) words.shift(); // drop heading words glued in front
+  if (words.length < 2 || words.length > 3 || words.some((w) => HEADING_WORDS.has(w))) return null;
+  const name = words.join(' ');
   if (NOT_NAMES.test(name) || COMPANY_WORDS.test(name)) return null;
   return name;
 }

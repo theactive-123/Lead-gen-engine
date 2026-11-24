@@ -4,7 +4,7 @@ A free, self-hosted engine that collects business websites from public data sour
 enriches them (tech stack, store size, niche, contacts, site quality) and turns them into
 scored leads for each of your brands. No API keys, no paid services.
 
-> Status: **Phase 3 (Cheap stages: normalise, DNS, homepage fetch)** done. See `docs/PROGRESS.md` for what is built and verified.
+> Status: **Phases 4–6 (technologies, store probes, niches, contacts, business signals)** done. See `docs/PROGRESS.md` for what is built and verified.
 
 ---
 
@@ -118,6 +118,32 @@ Rules you can edit (dashboard in Phase 9; tables today):
 - `page_tag_rules`: what counts as parked / coming soon / default page.
 
 Commands: `jobs normalize`, `jobs plan` (see "Everyday commands").
+
+---
+
+## Enrichment stages (Phases 4–6)
+
+| Stage | What it does | Output |
+|---|---|---|
+| 4 Technologies (`stage.tech`) | Detects ~7,700 technologies (Shopify apps, pixels, email tools, page builders, booking widgets…) from the stored homepage, using the open fingerprint data in `packages/fingerprints` | `data/lake/tech/`, Postgres `technologies` |
+| 5 Store probe (`stage.probe`) | Shopify: product count, location, prices of the 30 newest products, last product date. WooCommerce: product count, prices, categories. WordPress: installed plugin APIs | `data/lake/store_probe/`, Postgres `store_profiles` |
+| 6 Niche (`stage.classify`) | Scores every live site against your niche list (keywords in title/description/products, store / booking / services evidence) | `data/lake/classified/`, Postgres `classifications` |
+| 7 Contacts (`stage.contacts`) | For in-niche leads: homepage + up to 5 pages (contact, about, team, privacy, terms…) → emails, phones, address, founder/owner, social links. Emails are checked for a mail server (MX), never by sending | `data/lake/contacts/`, Postgres `contacts` |
+| 8 Business signals (`stage.signals`) | Country (and where it came from), size, freshness (domain age via RDAP), marketing tools | `data/lake/signals/`, Postgres `companies` |
+
+**How a niche is decided** (all editable in the `niches`, `sub_niches`, `keywords`, `url_patterns`, `niche_tech_hints` tables):
+- Keywords count more in the title (×3) and description / product names (×2) than in body text (×1, at most 2 points).
+- DTC brands need **real store evidence** (store platform, products, or shop pages). Agencies get a boost from services /
+  portfolio pages; studios from booking software. Boosts only add to real keyword evidence.
+- Dentists, restaurants, real estate, law firms and non-profits are recognised and **excluded** (not mislabelled).
+- Leads outside every niche are removed from Postgres and kept in the data lake.
+
+**Things to know**
+- Technology detection reads the HTML only. Tools that load later (e.g. pixels added by Google Tag Manager or Shopify's
+  pixel manager) can be missed, so "no pixel found" is not proof of "no ads" — the browser check in Phase 7 confirms.
+- Pages are fetched politely: robots.txt is respected, at most 1 request per second per website.
+- Backpressure: fetching pauses while many pages wait for technology detection (HTML is kept 3 days), and DNS
+  pauses while many domains wait for fetching.
 
 ---
 

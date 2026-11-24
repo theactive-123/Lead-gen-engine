@@ -71,6 +71,15 @@ describe('person names (cases seen in the first real batch)', () => {
     expect(cleanPersonName('Tapasya Bali')).toBe('Tapasya Bali');
     expect(cleanPersonName('Michael LaSalle')).toBe('Michael LaSalle');
   });
+  it('drops heading words glued in front of names (second real batch)', () => {
+    expect(cleanPersonName('Experts Curt Hargrove')).toBe('Curt Hargrove');
+    expect(cleanPersonName('Leadership Michelle Carroll')).toBe('Michelle Carroll');
+    expect(cleanPersonName('Now Rick Nussell')).toBe('Rick Nussell');
+    expect(cleanPersonName('Submit Jarrid Mendelson')).toBe('Jarrid Mendelson');
+    expect(cleanPersonName('History More John')).toBeNull();
+    expect(cleanPersonName('Independent Business')).toBeNull();
+    expect(cleanPersonName('Kirin Roberts-Mosley')).toBe('Kirin Roberts-Mosley');
+  });
   it('ignores people on legal pages when asked', () => {
     const html = '<body><p>This site is owned by Jane Smith Ltd. Founded by Jane Smith.</p></body>';
     expect(extractContacts(html, 'https://x.com/privacy', { people: false }).people).toEqual([]);
