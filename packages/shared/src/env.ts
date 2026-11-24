@@ -13,6 +13,8 @@ const schema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
   DUCKDB_MEMORY_LIMIT: z.string().default('2GB'),
   DUCKDB_THREADS: z.coerce.number().int().positive().default(4),
+  /** Most disk DuckDB may use to spill big queries (fails the query instead of filling the disk). */
+  DUCKDB_MAX_TEMP: z.string().default('4GB'),
 });
 
 export type Env = z.infer<typeof schema>;

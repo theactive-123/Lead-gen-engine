@@ -1,5 +1,5 @@
 import type { CountryCode } from 'libphonenumber-js';
-import { datasetExists, datasetGlob, db, env, lakeQuery, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
+import { datasetExists, datasetGlob, db, env, htmlFor, setting, withRun, writeParquet } from '@lead/shared';
 import { registrableDomain } from '../../sources/normalize.js';
 import { dohClient, udpClient } from '../dns/resolver.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from '../fetch/client.js';
@@ -90,11 +90,7 @@ export async function runContactsBatch(snapshot: string, batch: number): Promise
 
   // Stored homepages (kept a few days) save one request per lead.
   const home = new Map<string, string>();
-  if (rows.length && (await datasetExists('html'))) {
-    for (const h of await lakeQuery<{ domain: string; html: string }>(
-      `SELECT domain, arg_max(html, fetched_at) AS html FROM read_parquet(${datasetGlob('html')}) WHERE domain IN (${rows.map((r) => sqlLiteral(r.domain)).join(', ')}) GROUP BY domain`,
-    )) home.set(h.domain, h.html);
-  }
+  for (const h of await htmlFor(rows.map((r) => r.domain))) home.set(h.domain, h.html);
 
   return withRun('stage.contacts', { snapshot, batch }, async (run) => {
     const results: Record<string, unknown>[] = [];

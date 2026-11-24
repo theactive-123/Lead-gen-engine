@@ -1,4 +1,4 @@
-import { datasetExists, datasetGlob, db, setting, withRun, writeParquet } from '@lead/shared';
+import { datasetExists, datasetGlob, db, htmlFor, setting, withRun, writeParquet } from '@lead/shared';
 import { loadBatch, type StagePlan } from '../plan.js';
 import { TechEngine } from './engine.js';
 import { TechPool } from './pool.js';
@@ -39,15 +39,8 @@ export async function runTechBatch(snapshot: string, batch: number): Promise<Rec
   const threads = await setting<number>('tech.threads', 3);
   if (threads > 0) pool ??= new TechPool(threads);
   else engine ??= new TechEngine();
-  const { lakeQuery, sqlLiteral } = await import('@lead/shared');
-  const list = rows.map((r) => sqlLiteral(r.domain)).join(', ');
-  // Latest stored HTML per domain.
-  const pages = rows.length
-    ? await lakeQuery<{ domain: string; final_url: string; headers: string; cookies: string[]; html: string }>(`
-        SELECT domain, arg_max(final_url, fetched_at) AS final_url, arg_max(headers, fetched_at) AS headers,
-               arg_max(cookies, fetched_at) AS cookies, arg_max(html, fetched_at) AS html
-        FROM read_parquet(${datasetGlob('html')}) WHERE domain IN (${list}) GROUP BY domain`)
-    : [];
+  // Latest stored HTML per domain (reads only the files that contain these domains).
+  const pages = await htmlFor(rows.map((r) => r.domain));
 
   return withRun('stage.tech', { snapshot, batch }, async (run) => {
     const out: Record<string, unknown>[] = [];

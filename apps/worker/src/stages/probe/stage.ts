@@ -1,4 +1,4 @@
-import { datasetExists, datasetGlob, db, env, lakeQuery, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
+import { datasetExists, datasetGlob, db, env, htmlFor, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
 import { CrawlClient, HostLimiter, makeDispatcher, type FetchResult } from '../fetch/client.js';
 import { RobotsCache } from '../fetch/robots.js';
 import { errorKind } from '../fetch/stage.js';
@@ -41,12 +41,7 @@ export async function runProbeBatch(snapshot: string, batch: number): Promise<Re
 
   // Stored homepage HTML (if still kept) is only used to read the Shopify theme name.
   const htmlByDomain = new Map<string, string>();
-  const shopify = rows.filter((r) => r.platform === 'Shopify').map((r) => sqlLiteral(r.domain));
-  if (shopify.length && (await datasetExists('html'))) {
-    for (const h of await lakeQuery<{ domain: string; html: string }>(
-      `SELECT domain, arg_max(html, fetched_at) AS html FROM read_parquet(${datasetGlob('html')}) WHERE domain IN (${shopify.join(', ')}) GROUP BY domain`,
-    )) htmlByDomain.set(h.domain, h.html);
-  }
+  for (const h of await htmlFor(rows.filter((r) => r.platform === 'Shopify').map((r) => r.domain))) htmlByDomain.set(h.domain, h.html);
 
   return withRun('stage.probe', { snapshot, batch }, async (run) => {
     const out: Record<string, unknown>[] = [];

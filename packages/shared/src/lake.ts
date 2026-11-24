@@ -25,6 +25,12 @@ async function createInstance(): Promise<DuckDBInstance> {
     // httpfs lets DuckDB read Parquet over HTTPS (Common Crawl). Installed once, then cached on disk.
     await con.run('INSTALL httpfs');
     await con.run('LOAD httpfs');
+    // Spill space: a fixed folder next to the lake (not the current directory) with a hard size cap.
+    const tmp = path.resolve(env().LAKE_DIR, '..', 'duckdb-tmp');
+    await mkdir(tmp, { recursive: true });
+    await con.run(`SET temp_directory = ${sqlString(tmp)}`);
+    await con.run(`SET max_temp_directory_size = ${sqlString(env().DUCKDB_MAX_TEMP)}`);
+    await con.run('SET preserve_insertion_order = false'); // lets big scans stream instead of buffering
     const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
     if (proxy) await con.run(`SET http_proxy = ${sqlString(proxy.replace(/^https?:\/\//, ''))}`);
   } finally {
@@ -171,3 +177,24 @@ export async function lakeRun(sql: string): Promise<void> {
 }
 
 export { sqlString as sqlLiteral };
+
+/**
+ * Latest stored homepage HTML (and fetch metadata) for some domains.
+ * Two steps on purpose: find the few files that contain these domains (reads only the small domain
+ * column), then read the HTML from those files only. Reading the HTML column across all files at once
+ * made concurrent batches spill gigabytes to disk.
+ */
+export async function htmlFor(
+  domains: string[],
+): Promise<{ domain: string; final_url: string; headers: string; cookies: string[]; html: string; robots_txt: string | null }[]> {
+  if (!domains.length || !(await datasetExists('html'))) return [];
+  const list = domains.map(sqlString).join(', ');
+  const files = await lakeQuery<{ f: string }>(
+    `SELECT DISTINCT filename AS f FROM read_parquet(${datasetGlob('html')}, filename = true) WHERE domain IN (${list})`,
+  );
+  if (!files.length) return [];
+  return lakeQuery(`
+    SELECT domain, arg_max(final_url, fetched_at) AS final_url, arg_max(headers, fetched_at) AS headers,
+           arg_max(cookies, fetched_at) AS cookies, arg_max(html, fetched_at) AS html, arg_max(robots_txt, fetched_at) AS robots_txt
+    FROM read_parquet([${files.map((x) => sqlString(x.f)).join(', ')}]) WHERE domain IN (${list}) GROUP BY domain`);
+}
