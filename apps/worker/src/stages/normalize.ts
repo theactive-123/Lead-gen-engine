@@ -1,11 +1,11 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { glob, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { datasetGlob, lakeDir, lakeQuery, lakeRun, setting, sqlLiteral, withRun } from '@lead/shared';
 
 /**
  * Stage 1 — normalise & de-duplicate.
- * Maintains data/lake/registry/current/registry.parquet: one row per registrable domain with every
+ * Maintains the domain registry (data/lake/registry/current/, see REGISTRY_FILE): one row per registrable domain with every
  * source that saw it, its earliest sighting, merged hints, a priority score and a drop reason for junk.
  * Built incrementally (see normalize()). Rules come from the `normalize.rules` setting and are
  * re-applied to every row on each run, so rule edits take effect everywhere.
@@ -24,7 +24,23 @@ export interface NormalizeRules {
   junk_max_hyphens: number;
 }
 
-export const REGISTRY_FILE = () => lakeDir('registry', 'current', 'registry.parquet');
+const REGISTRY_DIR = () => lakeDir('registry', 'current');
+const POINTER = () => path.join(REGISTRY_DIR(), 'CURRENT');
+const KEEP_VERSIONS = 3;
+
+/**
+ * Path of the current registry. Every run writes a NEW file (registry-<time>.parquet) and then
+ * switches the small CURRENT pointer to it; a file is never overwritten under the same name, so
+ * a reader can never mix blocks of an old and a new registry. Older versions are kept for a few
+ * runs so long queries that already started keep their file.
+ */
+export function REGISTRY_FILE(): string {
+  try {
+    return path.join(REGISTRY_DIR(), readFileSync(POINTER(), 'utf8').trim());
+  } catch {
+    return path.join(REGISTRY_DIR(), 'registry.parquet'); // before the first versioned run
+  }
+}
 
 const list = (xs: string[]) => (xs.length ? `[${xs.map(sqlLiteral).join(', ')}]` : `[]::VARCHAR[]`);
 
@@ -129,8 +145,8 @@ export async function normalize(): Promise<Record<string, unknown>> {
   if (!rules) throw new Error('setting normalize.rules is missing');
   const chunk = Math.max(1, await setting<number>('normalize.chunk_files', 300));
   return withRun('stage.normalize', {}, async (run) => {
-    const out = REGISTRY_FILE();
-    const dir = path.dirname(out);
+    const prev = REGISTRY_FILE();
+    const dir = REGISTRY_DIR();
     await mkdir(dir, { recursive: true });
     await removeTemp(dir);
     const all = await candidateFiles();
@@ -139,7 +155,7 @@ export async function normalize(): Promise<Record<string, unknown>> {
     const stamp = Date.now();
     const temps: string[] = [];
     try {
-      let base: string | null = done ? `SELECT ${BASE_COLS} FROM read_parquet(${sqlLiteral(out)})` : null;
+      let base: string | null = done ? `SELECT ${BASE_COLS} FROM read_parquet(${sqlLiteral(prev)})` : null;
       for (let i = 0; i < todo.length; i += chunk) {
         // Two separate queries on purpose: aggregating the new files and merging into the base in one
         // query keeps two large hash tables alive at once and overflowed DuckDB's memory + temp cap.
@@ -154,18 +170,23 @@ export async function normalize(): Promise<Record<string, unknown>> {
         base = `SELECT ${BASE_COLS} FROM read_parquet(${sqlLiteral(merged)})`;
       }
       if (!base) return { domains: 0, kept: 0, new_files: 0 };
-      const tmp = `${out}.${stamp}.tmp`;
+      const name = `registry-${stamp}.parquet`;
+      const tmp = path.join(dir, `${name}.tmp`);
       temps.push(tmp);
       await lakeRun(`COPY (${deriveSql(base, rules)} ORDER BY priority DESC, domain) TO ${sqlLiteral(tmp)} (FORMAT parquet, COMPRESSION zstd)`);
-      // Atomic swaps: readers see the old or the new registry, never half. If we crash between the two
-      // renames, the file list lags behind and those files are merged again next run (harmless, see mergeSql).
-      await rename(tmp, out);
+      await rename(tmp, path.join(dir, name));
+      // Switch the pointer atomically. If we crash before the file list is saved, those files are
+      // merged again next run (harmless, see mergeSql).
+      await writeFile(`${POINTER()}.tmp`, name);
+      await rename(`${POINTER()}.tmp`, POINTER());
       const listTmp = `${FILES_LIST()}.${stamp}.tmp`;
       await writeFile(listTmp, JSON.stringify(done ? [...done, ...todo].sort() : all));
       await rename(listTmp, FILES_LIST());
     } finally {
       await Promise.all(temps.map((t) => rm(t, { force: true })));
     }
+    await pruneVersions(dir);
+    const out = REGISTRY_FILE();
     const [stats] = await lakeQuery<Record<string, bigint>>(`
       SELECT count(*) AS domains, count(*) FILTER (WHERE drop_reason IS NULL) AS kept FROM read_parquet(${sqlLiteral(out)})`);
     const drops = await lakeQuery<{ drop_reason: string; n: bigint }>(`
@@ -180,4 +201,12 @@ export async function normalize(): Promise<Record<string, unknown>> {
 /** Remove temp files left by a crashed or failed earlier run. */
 async function removeTemp(dir: string): Promise<void> {
   for (const f of await readdir(dir)) if (f.endsWith('.tmp')) await rm(path.join(dir, f), { force: true });
+}
+
+/** Keep the newest KEEP_VERSIONS registry files (and drop the pre-versioning registry.parquet). */
+async function pruneVersions(dir: string): Promise<void> {
+  const current = path.basename(REGISTRY_FILE());
+  const versions = (await readdir(dir)).filter((f) => /^registry-\d+\.parquet$/.test(f)).sort().reverse();
+  const old = [...versions.slice(KEEP_VERSIONS), 'registry.parquet'].filter((f) => f !== current);
+  await Promise.all(old.map((f) => rm(path.join(dir, f), { force: true })));
 }

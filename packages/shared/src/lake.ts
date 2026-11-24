@@ -31,6 +31,10 @@ async function createInstance(): Promise<DuckDBInstance> {
     await con.run(`SET temp_directory = ${sqlString(tmp)}`);
     await con.run(`SET max_temp_directory_size = ${sqlString(env().DUCKDB_MAX_TEMP)}`);
     await con.run('SET preserve_insertion_order = false'); // lets big scans stream instead of buffering
+    // The external file cache keys data by file path. Our files are replaced under the same path
+    // (registry) and the cache served stale blocks of the old file: "TProtocolException: Invalid data"
+    // on every later read in that process. Local files are cached by the OS anyway, so it gains nothing.
+    await con.run('SET enable_external_file_cache = false');
     const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
     if (proxy) await con.run(`SET http_proxy = ${sqlString(proxy.replace(/^https?:\/\//, ''))}`);
   } finally {

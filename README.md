@@ -105,7 +105,7 @@ Useful commands:
 
 | Stage | What it does | Output |
 |---|---|---|
-| 1 Normalise (`stage.normalize`, every 15 min) | Merges all sources into one row per domain, scores a **priority** (best leads first) and drops junk | `data/lake/registry/current/registry.parquet` |
+| 1 Normalise (`stage.normalize`, every 15 min) | Merges all sources into one row per domain, scores a **priority** (best leads first) and drops junk | `data/lake/registry/current/` (a new `registry-<time>.parquet` each run; `CURRENT` names the live one) |
 | 2 DNS (`stage.dns`) | Website address, www, mail (MX) and nameservers; mail provider and platform from DNS rules | `data/lake/dns/` |
 | 3 Homepage fetch (`stage.fetch`) | Checks robots.txt, fetches the homepage politely (1 request/second per website), extracts features, tags parked/placeholder pages, detects the platform | `data/lake/pages/` (features), `data/lake/html/` (compressed HTML, kept 3 days), live sites → Postgres `domains` |
 

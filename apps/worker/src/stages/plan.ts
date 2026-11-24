@@ -1,4 +1,4 @@
-import { mkdir, statfs } from 'node:fs/promises';
+import { mkdir, rename, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { ensureQueue, getCheckpoint, lakeDir, lakeQuery, lakeRun, logger, queue, setCheckpoint, setting, sqlLiteral } from '@lead/shared';
 
@@ -60,11 +60,19 @@ export async function planStage(plan: StagePlan): Promise<{ planned: number; bat
   const id = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const file = snapshotFile(plan.key, id);
   await mkdir(path.dirname(file), { recursive: true });
-  await lakeRun(`
-    COPY (
-      SELECT *, ((row_number() OVER (ORDER BY priority DESC, domain)) - 1) // ${Number(batchSize)} AS batch
-      FROM (SELECT * FROM (${todo}) t ${exclude} ORDER BY priority DESC, domain LIMIT ${Number(snapshotSize)})
-    ) TO ${sqlLiteral(file)} (FORMAT parquet)`);
+  // Write to a temp name and rename: a query that fails half-way (e.g. out of memory) must not leave
+  // a broken snapshot under the real name.
+  const tmp = `${file}.tmp`;
+  try {
+    await lakeRun(`
+      COPY (
+        SELECT *, ((row_number() OVER (ORDER BY priority DESC, domain)) - 1) // ${Number(batchSize)} AS batch
+        FROM (SELECT * FROM (${todo}) t ${exclude} ORDER BY priority DESC, domain LIMIT ${Number(snapshotSize)})
+      ) TO ${sqlLiteral(tmp)} (FORMAT parquet)`);
+    await rename(tmp, file);
+  } finally {
+    await rm(tmp, { force: true });
+  }
   const [{ n, b }] = (await lakeQuery<{ n: bigint; b: bigint }>(
     `SELECT count(*) AS n, count(DISTINCT batch) AS b FROM read_parquet(${sqlLiteral(file)})`,
   )) as [{ n: bigint; b: bigint }];

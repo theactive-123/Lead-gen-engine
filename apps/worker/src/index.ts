@@ -70,15 +70,20 @@ await ensureQueue(boss, 'stage.contacts', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.signals', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
-await boss.work('stage.plan', logged('stage.plan', async () => ({
-  dns: await planStage(dnsPlan),
-  fetch: await planStage(fetchPlan),
-  tech: await planStage(techPlan),
-  probe: await planStage(probePlan),
-  classify: await planStage(classifyPlan),
-  contacts: await planStage(contactsPlan),
-  signals: await planStage(signalsPlan),
-})));
+// Each stage is planned on its own: one failing stage (logged with its name) must not block the others.
+const plans = [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan];
+await boss.work('stage.plan', logged('stage.plan', async () => {
+  const out: Record<string, unknown> = {};
+  for (const p of plans) {
+    try {
+      out[p.key] = await planStage(p);
+    } catch (err) {
+      logger.error({ stage: p.key, err }, 'planning failed');
+      out[p.key] = { error: (err as Error).message.slice(0, 200) };
+    }
+  }
+  return out;
+}));
 await boss.work<Batch>('stage.dns', { localConcurrency: 2 }, logged<Batch>('stage.dns', (d) => runDnsBatch(d.snapshot, d.batch)));
 await boss.work<Batch>('stage.fetch', { localConcurrency: 2 }, logged<Batch>('stage.fetch', (d) => runFetchBatch(d.snapshot, d.batch)));
 // One tech batch at a time per worker: the batch itself spreads pages over `tech.threads` CPU threads.
