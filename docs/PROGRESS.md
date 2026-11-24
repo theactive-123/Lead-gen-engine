@@ -60,3 +60,19 @@
 - Overlaps: CC∩Tranco 80.5k; CT∩(Tranco∪CC) only 3%; WhoisDS∩CT 573 (new + already live with HTTPS).
 - CT keeps up: 15 logs read ~1.7× faster than real time; 4-log default reads 25 min of backlog in 216 s.
 - Cloudflare Nimbus timestamps lag ~1 h behind other logs (its "unique" share in a time window is an artifact).
+
+## Phase 3 — Cheap stages (done 2026-11-24)
+- Stage 1 normalise: registry rebuild 5,623,260 domains in ~21 s; 41,234 junk dropped (digits 38,036, long label 2,017, hyphens 1,181).
+- Planner: snapshot Parquet per stage + pg-boss batch jobs; outputs are the record of done work; recent 6 snapshots excluded.
+- Benchmark (sandbox, 1 worker, DNS over HTTPS through the proxy, 30 min, 0 failed runs):
+  DNS 889,706 domains/hour; homepage fetch 78,956/hour. Worker RSS ~3 GB.
+- Funnel (top-priority domains first): DNS pass 99.5%; fetched 62,800 → live 53,038 (84%).
+- Platforms on live pages: WooCommerce 25.7%, WordPress 19.1%, none 15.7%, Squarespace 14.7%, Shopify 14.1%, Wix 5.5%,
+  Weebly 2.8%, Webflow 1.0%, GoDaddy 0.6%, Framer 0.2%.
+- DNS platform rules derived from data (≥99.5% precision): agree with page fingerprints 99.96% where both known;
+  DNS alone identifies 37% of sites. Nameservers too weak (24–93%) → not used. `dns-parking.com` is Hostinger, not parking.
+- Sandbox-only: plain http:// blocked by the proxy (405) → `sandbox_http_blocked` (~11% of fetches); DNS needs `DNS_MODE=doh`.
+- Bugs found & fixed: "coming soon" as menu label (rule limited to ≤150 words or title); NDJSON staging broke on real
+  page text → Parquet writer now uses DuckDB appender; DOMException timeouts misclassified; Date→text for Postgres.
+- Disk: HTML ≈ 28 KB/site compressed → retention 3 days + disk guard (`disk.min_free_gb` = 20).
+- Not done yet (later phases): re-check schedule (7/21/45 days), parking NS rules (no reliable evidence yet).

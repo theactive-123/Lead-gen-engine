@@ -30,6 +30,7 @@ services:
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
       DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
       DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+      DNS_MODE: ${DNS_MODE:-}
     volumes:
       - ./data:/data
 

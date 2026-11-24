@@ -7,8 +7,8 @@ import { existsSync } from 'node:fs';
 /**
  * Stage 2 — DNS. For each domain: A (apex), CNAME + A (www), MX, NS.
  * A domain passes when the apex or www resolves to an address (= a website can exist).
- * Platform / mail provider / parking are matched from `platform_signatures`; matching is
- * re-done from the stored records whenever the rules change, so no re-lookup is needed.
+ * Platform / mail provider / parking are matched from `platform_signatures` here, and matched
+ * again at fetch time from the stored records, so new rules apply without new lookups.
  */
 export const dnsPlan: StagePlan = {
   key: 'dns',

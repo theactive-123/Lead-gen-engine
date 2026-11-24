@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { ensureQueue, getCheckpoint, lakeDir, lakeQuery, lakeRun, logger, queue, setCheckpoint, setting, sqlLiteral } from '@lead/shared';
 
@@ -25,6 +25,16 @@ const RECENT_SNAPSHOTS = 6;
 export const snapshotFile = (stage: string, id: string) => lakeDir('queue', stage, `${id}.parquet`);
 
 export async function planStage(plan: StagePlan): Promise<{ planned: number; batches: number } | { skipped: string }> {
+  // Disk guard: never let the engine fill the disk (HTML alone is ~2 GB/hour at full speed).
+  const minFreeGb = await setting<number>('disk.min_free_gb', 20);
+  await mkdir(lakeDir(), { recursive: true });
+  const fs = await statfs(lakeDir());
+  const freeGb = (fs.bavail * fs.bsize) / 1e9;
+  if (freeGb < minFreeGb) {
+    logger.warn({ stage: plan.key, freeGb: +freeGb.toFixed(1), minFreeGb }, 'low disk space: not planning new work');
+    return { skipped: `low disk: ${freeGb.toFixed(1)} GB free < ${minFreeGb} GB` };
+  }
+
   const boss = await queue();
   const name = `stage.${plan.key}`;
   await ensureQueue(boss, name);

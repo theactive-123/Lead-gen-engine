@@ -30,7 +30,7 @@ show('Funnel', await lakeQuery(`
 
 show('DNS status', await lakeQuery(`SELECT status, count(*) AS n FROM ${D} GROUP BY 1 ORDER BY 2 DESC`));
 show('Fetch status', await lakeQuery(`SELECT fetch_status, coalesce(https_error, '') AS https_error, count(*) AS n FROM ${P} GROUP BY ALL ORDER BY n DESC LIMIT 15`));
-show('Page tags (live + dropped)', await lakeQuery(`SELECT unnest(tags) AS tag, count(*) AS n FROM ${P} GROUP BY 1 ORDER BY 2 DESC`));
+show('Page tags (live + dropped)', await lakeQuery(`SELECT tag, count(*) AS n FROM (SELECT unnest(tags) AS tag FROM ${P}) GROUP BY 1 ORDER BY 2 DESC`));
 show('Platform (from page fingerprints), live pages', await lakeQuery(`
   SELECT coalesce(platform, '(none found)') AS platform, count(*) AS n, round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct
   FROM ${P} WHERE pass GROUP BY 1 ORDER BY 2 DESC`));

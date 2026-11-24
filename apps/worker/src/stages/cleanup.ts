@@ -7,7 +7,7 @@ import { lakeDir, setting, withRun } from '@lead/shared';
  * and work-plan snapshot files older than 7 days. Features in `pages` are kept forever.
  */
 export async function cleanup(): Promise<Record<string, unknown>> {
-  const keepDays = await setting<number>('html.retention_days', 7);
+  const keepDays = await setting<number>('html.retention_days', 3);
   return withRun('system.cleanup', { keepDays }, async (run) => {
     const cutoff = new Date(Date.now() - keepDays * 86_400_000).toISOString().slice(0, 10);
     let removed = 0;

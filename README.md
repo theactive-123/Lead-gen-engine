@@ -4,7 +4,7 @@ A free, self-hosted engine that collects business websites from public data sour
 enriches them (tech stack, store size, niche, contacts, site quality) and turns them into
 scored leads for each of your brands. No API keys, no paid services.
 
-> Status: **Phase 2 (Volume sources)** done. See `docs/PROGRESS.md` for what is built and verified.
+> Status: **Phase 3 (Cheap stages: normalise, DNS, homepage fetch)** done. See `docs/PROGRESS.md` for what is built and verified.
 
 ---
 
@@ -56,6 +56,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `CRAWLER_CONTACT_EMAIL` | Shown to website owners in every request so they can reach you. Use a separate inbox. | placeholder |
 | `WORKER_CONCURRENCY` | Jobs one worker process runs at once | `4` |
 | `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` | Memory and CPU threads for bulk data scans. Lower on small machines | `2GB` / `4` |
+| `DNS_MODE` | Empty = use the dashboard setting (`udp`, fastest). `doh` = DNS over HTTPS, only if your network blocks normal DNS | empty |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
 
@@ -96,6 +97,27 @@ Useful commands:
 | Check every source is reachable | `docker compose exec worker pnpm --filter @lead/worker jobs health` |
 | Run a source now | `docker compose exec worker pnpm --filter @lead/worker jobs source whoisds` |
 | See the volume report | `docker compose exec worker pnpm --filter @lead/worker exec tsx src/reports/phase2.ts` |
+
+---
+
+## Pipeline stages (Phase 3)
+
+| Stage | What it does | Output |
+|---|---|---|
+| 1 Normalise (`stage.normalize`, every 15 min) | Merges all sources into one row per domain, scores a **priority** (best leads first) and drops junk | `data/lake/registry/current/registry.parquet` |
+| 2 DNS (`stage.dns`) | Website address, www, mail (MX) and nameservers; mail provider and platform from DNS rules | `data/lake/dns/` |
+| 3 Homepage fetch (`stage.fetch`) | Checks robots.txt, fetches the homepage politely (1 request/second per website), extracts features, tags parked/placeholder pages, detects the platform | `data/lake/pages/` (features), `data/lake/html/` (compressed HTML, kept 3 days), live sites → Postgres `domains` |
+
+The planner (`stage.plan`, every minute) hands out work in batches. A domain counts as done once it has an
+output row, so restarts never lose or repeat work. If free disk drops below `disk.min_free_gb` (default 20 GB),
+planning pauses until space is freed.
+
+Rules you can edit (dashboard in Phase 9; tables today):
+- `normalize.rules` setting: priority points per source, preferred TLDs, junk filters.
+- `platform_signatures`: DNS rules for platform and mail provider (each with its measured evidence).
+- `page_tag_rules`: what counts as parked / coming soon / default page.
+
+Commands: `jobs normalize`, `jobs plan` (see "Everyday commands").
 
 ---
 

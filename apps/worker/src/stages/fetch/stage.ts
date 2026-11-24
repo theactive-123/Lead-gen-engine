@@ -3,6 +3,7 @@ import { datasetExists, datasetGlob, db, env, logger, setting, sqlLiteral, withR
 import { registrableDomain } from '../../sources/normalize.js';
 import { REGISTRY_FILE } from '../normalize.js';
 import { loadBatch, type StagePlan } from '../plan.js';
+import { loadSignatures, matchSignatures } from '../dns/stage.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from './client.js';
 import { extractFeatures, type PageFeatures } from './extract.js';
 import { detectPlatforms, primaryPlatform } from './platform.js';
@@ -21,14 +22,18 @@ export const fetchPlan: StagePlan = {
     if (!(await datasetExists('dns')) || !existsSync(REGISTRY_FILE())) return null;
     const done = (await datasetExists('pages')) ? `AND d.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('pages')}))` : '';
     return `
-      SELECT d.domain, r.priority, len(d.a) > 0 AS apex_ok, d.mx_provider, d.platform AS dns_platform,
+      SELECT d.domain, r.priority, len(d.a) > 0 AS apex_ok, d.a, d.www_cname, d.www_a, d.mx, d.ns,
              r.first_seen, r.sources
       FROM read_parquet(${datasetGlob('dns')}) d JOIN read_parquet(${sqlLiteral(REGISTRY_FILE())}) r USING (domain)
       WHERE d.pass ${done}`;
   },
 };
 
-interface Row { domain: string; priority: number; apex_ok: boolean; mx_provider: string | null; dns_platform: string | null; first_seen: string; sources: string[] }
+interface Row {
+  domain: string; priority: number; apex_ok: boolean; first_seen: string; sources: string[];
+  a: string[]; www_cname: string[]; www_a: string[]; mx: string[]; ns: string[];
+  dns?: Record<string, string | null>; // signature matches, computed with the CURRENT rules
+}
 
 const sameSite = (a: string, b: string) => {
   const x = registrableDomain(new URL(a).hostname);
@@ -36,9 +41,10 @@ const sameSite = (a: string, b: string) => {
   return 'domain' in x && 'domain' in y && x.domain === y.domain;
 };
 
-function errorKind(err: unknown): string {
-  const e = err as { name?: string; code?: string; cause?: { code?: string } };
-  const code = e.code ?? e.cause?.code ?? e.name ?? 'error';
+export function errorKind(err: unknown): string {
+  const e = err as { name?: string; code?: unknown; message?: string; cause?: { code?: string } };
+  // Timeouts arrive as DOMException "TimeoutError"/"AbortError" (numeric code) or undici *_TIMEOUT codes.
+  const code = [e.name, typeof e.code === 'string' ? e.code : '', e.cause?.code, e.message].filter(Boolean).join(' ');
   if (/timeout|aborted/i.test(code)) return 'timeout';
   if (/CERT|SSL|TLS|SELF_SIGNED|ERR_TLS/i.test(code)) return 'tls_error';
   if (/ENOTFOUND|EAI_AGAIN/i.test(code)) return 'dns_error';
@@ -48,6 +54,9 @@ function errorKind(err: unknown): string {
 
 export async function runFetchBatch(snapshot: string, batch: number): Promise<Record<string, unknown>> {
   const rows = await loadBatch<Row>('fetch', snapshot, batch);
+  // DNS platform / mail provider from the stored records with today's rules (no re-lookup needed).
+  const sigs = await loadSignatures();
+  for (const r of rows) r.dns = matchSignatures({ ...r, a: r.a ?? [], www_cname: r.www_cname ?? [], www_a: r.www_a ?? [], mx: r.mx ?? [], ns: r.ns ?? [] }, sigs);
   const maxConcurrency = await setting<number>('http.global_concurrency', 200);
   const perHostRps = await setting<number>('http.per_host_rps', 1);
   const timeoutMs = await setting<number>('http.timeout_ms', 10_000);
@@ -122,7 +131,7 @@ export async function runFetchBatch(snapshot: string, batch: number): Promise<Re
               word_count: f.word_count, links_internal: f.links_internal, links_external: f.links_external,
               script_src: f.script_src, style_href: f.style_href, meta: JSON.stringify(f.meta), jsonld: f.jsonld,
               jsonld_types: f.jsonld_types, copyright_year: f.copyright_year, has_form: f.has_form, img_count: f.img_count,
-              platform: primaryPlatform(found), platforms: JSON.stringify(found), tags: tag.tags, tag_drop: tag.drops,
+              platform: primaryPlatform(found), platforms: JSON.stringify(found), dns_platform: row.dns?.platform ?? null, tags: tag.tags, tag_drop: tag.drops,
             });
             htmls.push({
               domain: row.domain, final_url: res.url, fetched_at: out.fetched_at, headers: JSON.stringify(res.headers),
@@ -192,7 +201,7 @@ export async function runFetchBatch(snapshot: string, batch: number): Promise<Re
         viewport: 'BOOLEAN', canonical: 'VARCHAR', text_sample: 'VARCHAR', word_count: 'INTEGER', links_internal: 'VARCHAR[]',
         links_external: 'VARCHAR[]', script_src: 'VARCHAR[]', style_href: 'VARCHAR[]', meta: 'VARCHAR', jsonld: 'VARCHAR[]',
         jsonld_types: 'VARCHAR[]', copyright_year: 'INTEGER', has_form: 'BOOLEAN', img_count: 'INTEGER', platform: 'VARCHAR',
-        platforms: 'VARCHAR', tags: 'VARCHAR[]', tag_drop: 'BOOLEAN', pass: 'BOOLEAN', priority: 'INTEGER',
+        platforms: 'VARCHAR', dns_platform: 'VARCHAR', tags: 'VARCHAR[]', tag_drop: 'BOOLEAN', pass: 'BOOLEAN', priority: 'INTEGER',
       },
     });
     await writeParquet('html', htmls, {
@@ -218,8 +227,8 @@ export async function runFetchBatch(snapshot: string, batch: number): Promise<Re
           col((_, r) => new Date(r.first_seen as unknown as string).toISOString().slice(0, 10)),
           col((_, r) => (r.sources ?? []).join(',')),
           col((_, r) => r.priority),
-          col((p, r) => (p.platform as string | null) ?? r.dns_platform),
-          col((_, r) => r.mx_provider),
+          col((p, r) => (p.platform as string | null) ?? r.dns?.platform ?? null),
+          col((_, r) => ((r.mx ?? []).length ? (r.dns?.mx_provider ?? 'other') : null)),
           col((p) => (p.final_url as string) ?? null),
           col((p) => Number(p.http_status)),
           col((p) => (p.title as string | null) ?? null),

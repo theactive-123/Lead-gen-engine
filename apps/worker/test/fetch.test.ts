@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { extractFeatures } from '../src/stages/fetch/extract.js';
 import { detectPlatforms, parsePattern, primaryPlatform } from '../src/stages/fetch/platform.js';
 import { tagPage, type TagRule } from '../src/stages/fetch/tags.js';
+import { errorKind } from '../src/stages/fetch/stage.js';
 
 const dir = new URL('./fixtures/pages/', import.meta.url);
 const pages = readdirSync(dir).map((f) => JSON.parse(gunzipSync(readFileSync(new URL(f, dir))).toString('utf8')));
@@ -47,5 +48,16 @@ describe('page tags', () => {
   });
   it('still tags when the title says so, whatever the length', () => {
     expect(tagPage(rules, { title: 'Coming Soon | Acme', text: 'x', url: 'https://acme.com/', words: 900 }).drops).toBe(true);
+  });
+});
+
+describe('errorKind', () => {
+  it('recognises timeouts even when the error code is numeric (DOMException)', () => {
+    const e = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    expect(errorKind(e)).toBe('timeout');
+  });
+  it('classifies TLS and connection errors', () => {
+    expect(errorKind(Object.assign(new Error('x'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }))).toBe('tls_error');
+    expect(errorKind(Object.assign(new Error('x'), { cause: { code: 'ECONNRESET' } }))).toBe('connection_error');
   });
 });
