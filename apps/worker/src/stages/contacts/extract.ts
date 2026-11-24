@@ -69,8 +69,9 @@ const SOCIAL = [
 const WORD = "[A-Z][a-z]+(?:[A-Z][a-z]+)?(?:[-'’][A-Z]?[a-z]+)?";
 const NAME = `${WORD}(?:\\s+${WORD}){1,2}(?![A-Za-z])`;
 const PERSON_PATTERNS: { re: RegExp; title: string | null; confidence: number }[] = [
-  // "founded (and led) (in 2019) by (Sheng and) Jeff Auksel"
-  { re: new RegExp(`\\b(?:[Ff]ounded|[Ss]tarted|[Ee]stablished|[Cc]reated|[Oo]wned)(?:\\s+and\\s+(?:led|run|owned|operated))?(?:\\s+in\\s+\\d{4})?\\s+by\\s+(?:${WORD}\\s+(?:and|&)\\s+)?(${NAME})`, 'g'), title: 'Founder', confidence: 0.8 },
+  // "founded (and led) (in 2019) by (Sheng and) Jeff Auksel". Not "created by": that is how site/app credits read
+  // (seen: "Created by EasyFlow Product Options", "created by Softwarelance").
+  { re: new RegExp(`\\b(?:[Ff]ounded|[Ss]tarted|[Ee]stablished|[Oo]wned)(?:\\s+and\\s+(?:led|run|owned|operated))?(?:\\s+in\\s+\\d{4})?\\s+by\\s+(?:${WORD}\\s+(?:and|&)\\s+)?(${NAME})`, 'g'), title: 'Founder', confidence: 0.8 },
   { re: new RegExp(`\\b(${NAME}),?\\s+(?:is\\s+)?(?:the\\s+|our\\s+)?([Cc]o-?[Ff]ounder|[Ff]ounder|[Oo]wner|CEO|[Mm]anaging [Dd]irector)\\b`, 'g'), title: null, confidence: 0.6 },
   { re: new RegExp(`\\b([Cc]o-?[Ff]ounder|[Ff]ounder|[Oo]wner|CEO)\\s*(?:&\\s*[A-Za-z ]{2,20})?\\s*[:–—-]\\s*(${NAME})`, 'g'), title: null, confidence: 0.7 },
 ];
@@ -88,7 +89,7 @@ const typeOf = (o: Record<string, any>) => (Array.isArray(o['@type']) ? o['@type
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() || null : null);
 
 /** Extract everything from one page. `defaultCountry` helps read local phone numbers. */
-const COMPANY_WORDS = /\b(Business|Limited|Ltd|LLC|L\.L\.C|Inc|Incorporated|Corp|Corporation|Company|Co|Group|Holdings|GmbH|AG|Pty|PLC|LLP|SAS|BV|Studio|Studios|Agency|Media|Labs|Essentials|Enterprises|Industries|Solutions|Services|Store|Shop|Brands?)\b/;
+const COMPANY_WORDS = /\b(Marketing|Design|Designs|Digital|Creative|Consulting|Productions|Ventures|Software|Apps?|Web|Online|Recovery|Media|Business|Limited|Ltd|LLC|L\.L\.C|Inc|Incorporated|Corp|Corporation|Company|Co|Group|Holdings|GmbH|AG|Pty|PLC|LLP|SAS|BV|Studio|Studios|Agency|Media|Labs|Essentials|Enterprises|Industries|Solutions|Services|Store|Shop|Brands?)\b/;
 const LEADING_ROLE = /^(?:(?:Co-?)?[Ff]ounders?|[Oo]wners?|CEO|Directors?)\s+/;
 
 // Capitalised heading / button / label words that precede names on real pages
@@ -97,7 +98,8 @@ const HEADING_WORDS = new Set(('Experts Expert History More Leadership Now Submi
   'Director Directors Management Board Staff Partner Partners Executive Executives Team Meet Story Mission Vision Values Testimonial Testimonials ' +
   'Review Reviews Quote Award Awards Winner Founder Founders Owner Owners Our The About Contact Home Welcome Hello Hi Dear Behind Leader Leaders ' +
   'Visionary Principal Head Chief Senior Lead Manager Consultant Coach Trainer Designer Developer Photographer Artist Author Speaker Chef ' +
-  'Meet-the-team Introducing Featuring Presenting Questions Call Email Phone Address Hours Location Locations Services Products Shop Book Today')
+  'Meet-the-team Introducing Featuring Presenting Questions Call Email Phone Address Hours Location Locations Services Products Shop Book Today ' +
+  'How To My Your Videos Video Options Option Choosing Product Products Free Sale New Best Top')
   .split(/\s+/));
 
 /** A person's name, or null when it is a role/heading word or a company name (seen: "Google Ireland Limited" on a privacy page). */

@@ -80,6 +80,15 @@ describe('person names (cases seen in the first real batch)', () => {
     expect(cleanPersonName('Independent Business')).toBeNull();
     expect(cleanPersonName('Kirin Roberts-Mosley')).toBe('Kirin Roberts-Mosley');
   });
+  it('rejects brand and heading phrases (third real batch)', () => {
+    for (const bad of ['How To Videos', 'Blue Barn Marketing', 'My Time Recovery', 'EasyFlow Product Options']) expect(cleanPersonName(bad), bad).toBeNull();
+    expect(cleanPersonName('Mark Sargeant')).toBe('Mark Sargeant');
+    expect(cleanPersonName('Susan Baker Wilson')).toBe('Susan Baker Wilson');
+  });
+  it('does not treat site credits as founders', () => {
+    const r = extractContacts('<body><footer>Website created by Softwarelance Choosing. Founded by Diana Toncea.</footer></body>', 'https://x.com/');
+    expect(r.people.map((p) => p.value.name)).toEqual(['Diana Toncea']);
+  });
   it('ignores people on legal pages when asked', () => {
     const html = '<body><p>This site is owned by Jane Smith Ltd. Founded by Jane Smith.</p></body>';
     expect(extractContacts(html, 'https://x.com/privacy', { people: false }).people).toEqual([]);
