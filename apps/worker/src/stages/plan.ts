@@ -17,6 +17,8 @@ import { ensureQueue, getCheckpoint, lakeDir, lakeQuery, lakeRun, logger, queue,
 export interface StagePlan {
   key: string;                 // stage key; queue is `stage.<key>`
   todoSql: () => Promise<string | null>; // SELECT domain, priority, ...extra columns; null = nothing to do
+  /** Optional: a reason to hold planning (e.g. the next stage has a big backlog), else null. */
+  hold?: () => Promise<string | null>;
   defaults: { batch: number; snapshot: number };
 }
 
@@ -44,6 +46,9 @@ export async function planStage(plan: StagePlan): Promise<{ planned: number; bat
   // Keep a modest backlog: plan again only when less than one snapshot's worth of batches is waiting.
   const waiting = (q?.queuedCount ?? 0) + (q?.activeCount ?? 0);
   if (waiting >= Math.ceil(snapshotSize / batchSize)) return { skipped: `${waiting} batches already waiting` };
+
+  const held = await plan.hold?.();
+  if (held) return { skipped: held };
 
   const todo = await plan.todoSql();
   if (!todo) return { skipped: 'input not available yet' };

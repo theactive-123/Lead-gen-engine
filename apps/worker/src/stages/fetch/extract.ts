@@ -28,6 +28,23 @@ export interface PageFeatures {
 }
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * Visible text with a space between elements. cheerio's .text() glues neighbours together
+ * ("<span>Email</span><span>info@x.com</span>" -> "Emailinfo@x.com"), which breaks words and emails.
+ */
+export function visibleText($: cheerio.CheerioAPI, root = 'body'): string {
+  const parts: string[] = [];
+  const walk = (nodes: any[]) => {
+    for (const n of nodes) {
+      if (n.type === 'text') parts.push(n.data);
+      else if (n.type === 'tag' && !['script', 'style', 'noscript', 'svg', 'template', 'iframe'].includes(n.name)) walk(n.children ?? []);
+    }
+  };
+  const start = $(root);
+  walk(start.length ? start.toArray() : $.root().toArray());
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
 const cut = (s: string | undefined | null, n: number) => (s ? squash(s).slice(0, n) || null : null);
 
 export function extractFeatures(
@@ -81,9 +98,8 @@ export function extractFeatures(
   onDoc?.($, { scriptSrc, meta });
   const hasForm = $('form').length > 0;
   const imgCount = $('img').length;
-  $('script, style, noscript, svg, template, iframe').remove();
-  const text = squash($('body').text() || $.root().text());
-  const footer = squash($('footer').text()) || text.slice(-1500);
+  const text = visibleText($);
+  const footer = visibleText($, 'footer') || text.slice(-1500);
   const years = [...footer.matchAll(/(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi)].map((m) => Number(m[1]));
   const thisYear = new Date().getUTCFullYear();
   const year = years.filter((y) => y >= 1995 && y <= thisYear + 1).sort().at(-1) ?? null;

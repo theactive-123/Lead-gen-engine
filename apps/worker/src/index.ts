@@ -6,6 +6,11 @@ import { dnsPlan, runDnsBatch } from './stages/dns/stage.js';
 import { fetchPlan, runFetchBatch } from './stages/fetch/stage.js';
 import { normalize } from './stages/normalize.js';
 import { planStage } from './stages/plan.js';
+import { runTechBatch, techPlan } from './stages/tech/stage.js';
+import { probePlan, runProbeBatch } from './stages/probe/stage.js';
+import { classifyPlan, runClassifyBatch } from './stages/classify/stage.js';
+import { contactsPlan, runContactsBatch } from './stages/contacts/stage.js';
+import { runSignalsBatch, signalsPlan } from './stages/signals/stage.js';
 import { beat, diskUsage, heartbeat, lakeSelftest } from './jobs/system.js';
 
 /**
@@ -58,11 +63,30 @@ await ensureQueue(boss, 'stage.normalize', { exclusive: true, expireInSeconds: 3
 await ensureQueue(boss, 'stage.plan', { exclusive: true, expireInSeconds: 600 });
 await ensureQueue(boss, 'stage.dns', { expireInSeconds: 1800 });
 await ensureQueue(boss, 'stage.fetch', { expireInSeconds: 1800 });
+await ensureQueue(boss, 'stage.tech', { expireInSeconds: 1800 });
+await ensureQueue(boss, 'stage.probe', { expireInSeconds: 1800 });
+await ensureQueue(boss, 'stage.classify', { expireInSeconds: 1800 });
+await ensureQueue(boss, 'stage.contacts', { expireInSeconds: 3600 });
+await ensureQueue(boss, 'stage.signals', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
-await boss.work('stage.plan', logged('stage.plan', async () => ({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan) })));
+await boss.work('stage.plan', logged('stage.plan', async () => ({
+  dns: await planStage(dnsPlan),
+  fetch: await planStage(fetchPlan),
+  tech: await planStage(techPlan),
+  probe: await planStage(probePlan),
+  classify: await planStage(classifyPlan),
+  contacts: await planStage(contactsPlan),
+  signals: await planStage(signalsPlan),
+})));
 await boss.work<Batch>('stage.dns', { localConcurrency: 2 }, logged<Batch>('stage.dns', (d) => runDnsBatch(d.snapshot, d.batch)));
 await boss.work<Batch>('stage.fetch', { localConcurrency: 2 }, logged<Batch>('stage.fetch', (d) => runFetchBatch(d.snapshot, d.batch)));
+// One tech batch at a time per worker: the batch itself spreads pages over `tech.threads` CPU threads.
+await boss.work<Batch>('stage.tech', { localConcurrency: 1 }, logged<Batch>('stage.tech', (d) => runTechBatch(d.snapshot, d.batch)));
+await boss.work<Batch>('stage.probe', { localConcurrency: 2 }, logged<Batch>('stage.probe', (d) => runProbeBatch(d.snapshot, d.batch)));
+await boss.work<Batch>('stage.classify', { localConcurrency: 1 }, logged<Batch>('stage.classify', (d) => runClassifyBatch(d.snapshot, d.batch)));
+await boss.work<Batch>('stage.contacts', { localConcurrency: 2 }, logged<Batch>('stage.contacts', (d) => runContactsBatch(d.snapshot, d.batch)));
+await boss.work<Batch>('stage.signals', { localConcurrency: 1 }, logged<Batch>('stage.signals', (d) => runSignalsBatch(d.snapshot, d.batch)));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
 await boss.schedule('stage.normalize', '*/15 * * * *');
 await boss.schedule('stage.plan', '* * * * *');

@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { CheerioAPI } from 'cheerio';
 
+/** Fingerprint tag separator: a backslash followed by a semicolon (built from char codes to avoid escaping mistakes). */
+export const TAG_SEP = String.fromCharCode(92) + ';';
+
 /**
  * Website-platform detection from the vendored open fingerprints (enthec/webappanalyzer, GPL-3.0).
  * Phase 3 only evaluates the site-builder / ecommerce platforms below; Phase 4 runs the full set.
@@ -30,7 +33,7 @@ interface Tech {
 
 /** "regex\;confidence:50\;version:\1" -> { re, confidence } */
 export function parsePattern(p: string): Pattern | null {
-  const [src, ...tags] = p.split('\;');
+  const [src, ...tags] = p.split(TAG_SEP);
   let confidence = 100;
   for (const t of tags) if (t.startsWith('confidence:')) confidence = Number(t.slice(11)) || 0;
   try {

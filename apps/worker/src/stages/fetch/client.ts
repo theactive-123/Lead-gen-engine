@@ -47,7 +47,7 @@ export class CrawlClient {
   ) {}
 
   /** GET with manual redirects. `accept` = 'html' rejects non-HTML bodies (headers still returned). */
-  async get(url: string, accept: 'html' | 'text' = 'html', beforeHop?: (next: string) => Promise<boolean>): Promise<FetchResult> {
+  async get(url: string, accept: 'html' | 'text' | 'json' = 'html', beforeHop?: (next: string) => Promise<boolean>): Promise<FetchResult> {
     const started = Date.now();
     const redirects: string[] = [];
     let current = url;
@@ -60,7 +60,10 @@ export class CrawlClient {
         method: 'GET',
         headers: {
           'user-agent': userAgent(),
-          accept: accept === 'html' ? 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' : 'text/plain,*/*;q=0.5',
+          accept:
+            accept === 'html' ? 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5'
+            : accept === 'json' ? 'application/json,*/*;q=0.5'
+            : 'text/plain,*/*;q=0.5',
           'accept-language': 'en',
           'accept-encoding': 'gzip, deflate, br',
         },

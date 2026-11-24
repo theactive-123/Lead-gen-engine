@@ -29,3 +29,6 @@ export async function withTx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T
     client.release();
   }
 }
+
+/** A checked-out client for transactions. */
+export type DbClient = pg.PoolClient;

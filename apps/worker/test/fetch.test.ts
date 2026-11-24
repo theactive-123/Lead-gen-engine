@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { extractFeatures } from '../src/stages/fetch/extract.js';
-import { detectPlatforms, parsePattern, primaryPlatform } from '../src/stages/fetch/platform.js';
+import { TAG_SEP, detectPlatforms, parsePattern, primaryPlatform } from '../src/stages/fetch/platform.js';
 import { tagPage, type TagRule } from '../src/stages/fetch/tags.js';
 import { errorKind } from '../src/stages/fetch/stage.js';
 
@@ -27,12 +27,15 @@ describe('homepage extraction + platform detection (real pages fetched 2026-11-2
   });
 });
 
-describe('fingerprint pattern syntax', () => {
-  it('reads confidence and ignores version tags', () => {
-    const p = parsePattern('(?:cdn\\.|\\.my)shopify\\.com\;confidence:50')!;
+describe('fingerprint pattern syntax (patterns read from the vendored data, not retyped)', () => {
+  const data = JSON.parse(readFileSync(new URL('../../../packages/fingerprints/technologies/s.json', import.meta.url), 'utf8'));
+  it('separates the regex from its confidence tag (Shopify link pattern, confidence 50)', () => {
+    const raw: string = data.Shopify.dom["link[href*='shopify.com']"].attributes.href;
+    expect(raw.includes(TAG_SEP)).toBe(true);
+    const p = parsePattern(raw)!;
     expect(p.confidence).toBe(50);
-    expect(p.re.test('https://cdn.shopify.com/s/files/x.js')).toBe(true);
-    expect(parsePattern('WooCommerce ([\\d.]+)\;version:\\1')!.confidence).toBe(100);
+    expect(p.re.test('https://cdn.shopify.com/s/files/x.css')).toBe(true);
+    expect(p.re.source.endsWith(String.fromCharCode(92))).toBe(false);
   });
 });
 

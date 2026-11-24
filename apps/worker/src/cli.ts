@@ -5,6 +5,11 @@ import { dnsPlan } from './stages/dns/stage.js';
 import { fetchPlan } from './stages/fetch/stage.js';
 import { normalize } from './stages/normalize.js';
 import { planStage } from './stages/plan.js';
+import { techPlan } from './stages/tech/stage.js';
+import { probePlan } from './stages/probe/stage.js';
+import { classifyPlan } from './stages/classify/stage.js';
+import { contactsPlan } from './stages/contacts/stage.js';
+import { signalsPlan } from './stages/signals/stage.js';
 
 /**
  * Small command line for operators:
@@ -21,7 +26,7 @@ const boss = await queue();
 if (cmd === 'normalize') {
   console.log(await normalize());
 } else if (cmd === 'plan') {
-  console.log({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan) });
+  console.log({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan), tech: await planStage(techPlan), probe: await planStage(probePlan), classify: await planStage(classifyPlan), contacts: await planStage(contactsPlan), signals: await planStage(signalsPlan) });
 } else if (cmd === 'source' && name) {
   console.log(await runSource(name));
 } else if (cmd === 'health') {

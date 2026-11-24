@@ -13,6 +13,16 @@ import { existsSync } from 'node:fs';
 export const dnsPlan: StagePlan = {
   key: 'dns',
   defaults: { batch: 2000, snapshot: 20000 },
+  // Backpressure: no point resolving far ahead of the homepage fetch (wastes CPU and disk).
+  async hold() {
+    if (!(await datasetExists('dns'))) return null;
+    const { lakeQuery, setting } = await import('@lead/shared');
+    const max = await setting<number>('stage.dns.max_fetch_backlog', 100_000);
+    const notFetched = (await datasetExists('pages')) ? `AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('pages')}, union_by_name = true))` : '';
+    const [r] = await lakeQuery<{ n: bigint }>(`SELECT count(DISTINCT domain) AS n FROM read_parquet(${datasetGlob('dns')}) WHERE pass ${notFetched}`);
+    const backlog = Number(r?.n ?? 0);
+    return backlog > max ? `homepage fetch backlog ${backlog} > ${max}` : null;
+  },
   async todoSql() {
     if (!existsSync(REGISTRY_FILE())) return null;
     const done = (await datasetExists('dns')) ? `AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('dns')}))` : '';

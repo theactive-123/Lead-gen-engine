@@ -18,6 +18,13 @@ import { loadTagRules, tagPage } from './tags.js';
 export const fetchPlan: StagePlan = {
   key: 'fetch',
   defaults: { batch: 400, snapshot: 4000 },
+  // Backpressure: HTML is kept only a few days, so don't fetch faster than fingerprinting keeps up.
+  async hold() {
+    const { techBacklog } = await import('../tech/stage.js');
+    const max = await setting<number>('stage.fetch.max_tech_backlog', 20_000);
+    const backlog = await techBacklog();
+    return backlog > max ? `technology detection backlog ${backlog} > ${max}` : null;
+  },
   async todoSql() {
     if (!(await datasetExists('dns')) || !existsSync(REGISTRY_FILE())) return null;
     const done = (await datasetExists('pages')) ? `AND d.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('pages')}))` : '';
