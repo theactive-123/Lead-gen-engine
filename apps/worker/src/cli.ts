@@ -1,6 +1,10 @@
 import { QUEUES, closeDb, queue, stopQueue } from '@lead/shared';
 import { SOURCES } from './sources/index.js';
 import { runSource } from './sources/runner.js';
+import { dnsPlan } from './stages/dns/stage.js';
+import { fetchPlan } from './stages/fetch/stage.js';
+import { normalize } from './stages/normalize.js';
+import { planStage } from './stages/plan.js';
 
 /**
  * Small command line for operators:
@@ -8,11 +12,17 @@ import { runSource } from './sources/runner.js';
  *   pnpm jobs run system.lake-selftest '{"rows":100000}'   -> enqueue a job
  *   pnpm jobs source ct                     -> run a source right now in this process (no queue)
  *   pnpm jobs health                        -> check every source is reachable
+ *   pnpm jobs normalize                     -> rebuild the domain registry now
+ *   pnpm jobs plan                          -> plan DNS + fetch batches now
  */
 const [cmd, name, json] = process.argv.slice(2);
 const boss = await queue();
 
-if (cmd === 'source' && name) {
+if (cmd === 'normalize') {
+  console.log(await normalize());
+} else if (cmd === 'plan') {
+  console.log({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan) });
+} else if (cmd === 'source' && name) {
   console.log(await runSource(name));
 } else if (cmd === 'health') {
   for (const s of Object.values(SOURCES)) {

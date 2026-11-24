@@ -1,5 +1,5 @@
-import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { DuckDBInstance, LIST, VARCHAR, dateValue, timestampValue, type DuckDBConnection } from '@duckdb/node-api';
+import { mkdir, readdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { env } from './env.js';
@@ -47,42 +47,68 @@ function sqlString(s: string): string {
   return `'${s.replaceAll("'", "''")}'`;
 }
 
+type ColType = 'VARCHAR' | 'INTEGER' | 'BIGINT' | 'DOUBLE' | 'BOOLEAN' | 'TIMESTAMP' | 'DATE' | 'VARCHAR[]';
+
 /**
  * Write rows to a new Parquet file in the dataset's partition for `dt`.
- * Rows are staged as newline-delimited JSON and converted by DuckDB (fast, typed by inference
- * or by the explicit `columns` map). Returns the file path and row count.
+ * Rows go straight into DuckDB through its native appender (no text/JSON staging, so any
+ * character found on real web pages is safe), then DuckDB writes one zstd-compressed Parquet file.
+ * `columns` fixes the schema and column order; keys not listed are ignored.
  */
 export async function writeParquet(
   dataset: string,
   rows: Record<string, unknown>[],
-  opts: { dt?: string; columns?: Record<string, string>; name?: string } = {},
+  opts: { dt?: string; columns: Record<string, ColType>; name?: string },
 ): Promise<{ file: string; rows: number }> {
   if (rows.length === 0) return { file: '', rows: 0 };
   const dir = lakeDir(dataset, `dt=${opts.dt ?? today()}`);
   await mkdir(dir, { recursive: true });
   // A fixed `name` makes writes idempotent: re-running the same batch overwrites the same file.
   const id = opts.name ?? randomUUID();
-  const tmp = path.join(dir, `.staging-${id}-${randomUUID()}.ndjson`);
   const file = path.join(dir, `part-${id}.parquet`);
-  await writeFile(tmp, rows.map((r) => JSON.stringify(r)).join('\n'));
+  const table = `w_${randomUUID().replaceAll('-', '')}`;
+  const cols = Object.entries(opts.columns);
   const con = await duck();
   try {
-    const cols = opts.columns
-      ? `, columns={${Object.entries(opts.columns).map(([k, v]) => `${sqlString(k)}: ${sqlString(v)}`).join(', ')}}`
-      : '';
+    await con.run(`CREATE TABLE ${table} (${cols.map(([c, t]) => `"${c}" ${t}`).join(', ')})`);
+    const app = await con.createAppender(table);
+    const varcharList = LIST(VARCHAR);
+    for (const row of rows) {
+      for (const [c, t] of cols) {
+        const v = row[c];
+        if (v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v))) {
+          app.appendNull();
+          continue;
+        }
+        switch (t) {
+          case 'VARCHAR': app.appendVarchar(clean(String(v))); break;
+          case 'INTEGER': app.appendInteger(Math.trunc(Number(v))); break;
+          case 'BIGINT': app.appendBigInt(BigInt(Math.trunc(Number(v)))); break;
+          case 'DOUBLE': app.appendDouble(Number(v)); break;
+          case 'BOOLEAN': app.appendBoolean(Boolean(v)); break;
+          case 'TIMESTAMP': app.appendTimestamp(timestampValue(BigInt(toDate(v).getTime()) * 1000n)); break;
+          case 'DATE': app.appendDate(dateValue(Math.floor(toDate(v).getTime() / 86_400_000))); break;
+          case 'VARCHAR[]': app.appendList((v as unknown[]).map((x) => clean(String(x))), varcharList); break;
+        }
+      }
+      app.endRow();
+    }
+    app.flushSync();
+    app.closeSync();
     // Written to a temp name, then renamed: readers never see half-written files.
     const tmpOut = `${file}.${randomUUID()}.tmp`;
-    await con.run(
-      `COPY (SELECT * FROM read_json(${sqlString(tmp)}, format='newline_delimited'${cols}))
-       TO ${sqlString(tmpOut)} (FORMAT parquet, COMPRESSION zstd)`,
-    );
+    await con.run(`COPY ${table} TO ${sqlString(tmpOut)} (FORMAT parquet, COMPRESSION zstd)`);
     await rename(tmpOut, file);
   } finally {
+    await con.run(`DROP TABLE IF EXISTS ${table}`).catch(() => {});
     con.closeSync();
-    await rm(tmp, { force: true });
   }
   return { file, rows: rows.length };
 }
+
+const toDate = (v: unknown) => (v instanceof Date ? v : new Date(String(v)));
+// NUL characters are not allowed in DuckDB text; web pages occasionally contain them.
+const clean = (s: string) => (s.includes('\u0000') ? s.replaceAll('\u0000', '') : s);
 
 /** Glob for every Parquet file of a dataset (all days), for use inside DuckDB SQL. */
 export function datasetGlob(dataset: string): string {
@@ -126,3 +152,22 @@ export async function lakeUsage(): Promise<{ dataset: string; files: number; byt
   }
   return out;
 }
+
+/** True when the dataset has at least one Parquet file (DuckDB errors on an empty glob). */
+export async function datasetExists(dataset: string): Promise<boolean> {
+  const { glob } = await import('node:fs/promises');
+  for await (const _ of glob(path.join(lakeDir(dataset), '**', '*.parquet'))) return true;
+  return false;
+}
+
+/** Run a statement (COPY, CREATE...) without reading results. */
+export async function lakeRun(sql: string): Promise<void> {
+  const con = await duck();
+  try {
+    await con.run(sql);
+  } finally {
+    con.closeSync();
+  }
+}
+
+export { sqlString as sqlLiteral };

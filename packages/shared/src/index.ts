@@ -7,3 +7,4 @@ export * from './runs.js';
 export * from './queue.js';
 export * from './lake.js';
 export * from './worker-id.js';
+export * from './settings.js';
