@@ -76,3 +76,41 @@
   page text → Parquet writer now uses DuckDB appender; DOMException timeouts misclassified; Date→text for Postgres.
 - Disk: HTML ≈ 28 KB/site compressed → retention 3 days + disk guard (`disk.min_free_gb` = 20).
 - Not done yet (later phases): re-check schedule (7/21/45 days), parking NS rules (no reliable evidence yet).
+
+## Phases 4–6 — Technologies, store probes, niches, contacts, signals (done 2026-11-25)
+Run on real data in this sandbox (1 worker). Numbers below are the drained end state.
+
+**Phase 4 — technologies + store probes**
+- Fingerprints: vendored `enthec/webappanalyzer` (GPL-3.0, 7,704 technologies) in `packages/fingerprints`; worker-thread pool (`tech.threads`).
+- 111,170 live pages analysed, avg 14.9 technologies per site; ~15–18k pages/hour per worker.
+- Shopify 15,892 · WooCommerce 28,090 · WordPress 49,469 · Squarespace 18,952 · Wix 5,458 · Webflow 1,143.
+- Marketing tools (HTML only): Facebook Pixel 8,286 · Mailchimp 3,874 · Klaviyo 2,661 · HubSpot 1,345 · Calendly 789.
+  TikTok Pixel only 2 → pixels injected later by GTM / Shopify pixel manager are not visible in HTML (browser check in Phase 7).
+- Store probes (public endpoints, verified live): Shopify 15,270/15,892 answered, median 77 products, median price 47, 5,848 published a
+  product in the last 30 days. WooCommerce Store API 25,918/28,123 answered, median 24 products, median price 60 (Store API gives no dates).
+  WordPress REST 18,756/20,728.
+- Example segment: Shopify without Klaviyo = 13,648 of 15,892.
+
+**Phase 5 — niches** (rules + keyword dictionaries; embeddings verified feasible, not enabled)
+- 111,170 classified → 23,949 in scope (21.5%). DTC 14,709 · other 4,838 · white-label 3,404 · wellness 998.
+- Saturated / non-commercial recognised and excluded: non-profit 496, restaurant 494, real estate 409, dental 277, law 228.
+- Three review rounds on real samples; precision per niche ≈ 80–100%. Review file: `docs/phase5-niche-samples.csv` (50 per sub-niche).
+
+**Phase 6 — contacts + signals**
+- Email found for 80.7% of leads (role 11,192 · named 4,594 · freemail 3,542 · none 4,621). Phone 41–59%, owner 9–29%, address 9–28% by niche.
+- Precision check: 45/45 extracted values found again on their source page.
+- Country found for 71% (store 7,142 · phone 6,078 · address 3,134 · TLD 609). Top: US 6,902, GB 2,266, IN 1,531, AU 1,339, CA 990.
+- Domain age via RDAP (IANA bootstrap, keyless): 92% of leads; no RDAP for some ccTLDs (.co/.io/.de).
+- OSM Overpass skipped: no per-website lookup and its fair-use policy forbids bulk use.
+
+**Bugs found & fixed during the end-to-end run**
+- DuckDB spilled 19 GB → capped temp dir (`DUCKDB_MAX_TEMP`), HTML loaded only from the files that hold the batch.
+- Normalize full rebuild overflowed (CT: 17M rows for 3.5M domains) → incremental chunked merge (full 36 s, incremental 6 s), test proves
+  it equals a full rebuild. Priority used the first listed source instead of the best (10,505 domains too low) → fixed.
+- Stale reads ("TProtocolException") after the registry was replaced under the same path → DuckDB external file cache off,
+  versioned registry files + `CURRENT` pointer, planner snapshots written atomically, each stage planned independently.
+
+**Known limits / next**
+- One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,
+  which then retries. Phase 11: limit concurrent heavy DuckDB jobs.
+- Sandbox only: `disk.min_free_gb` set to 10 (sandbox disk is ~40 GB); default stays 20.

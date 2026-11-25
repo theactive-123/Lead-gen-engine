@@ -4,7 +4,7 @@ A free, self-hosted engine that collects business websites from public data sour
 enriches them (tech stack, store size, niche, contacts, site quality) and turns them into
 scored leads for each of your brands. No API keys, no paid services.
 
-> Status: **Phases 4–6 (technologies, store probes, niches, contacts, business signals)** done. See `docs/PROGRESS.md` for what is built and verified.
+> Status: **Phases 1–6** done (sources, DNS, fetch, technologies, store probes, niches, contacts, business signals). See `docs/PROGRESS.md` for what is built and verified.
 
 ---
 
