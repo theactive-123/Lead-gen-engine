@@ -1,0 +1,9 @@
+{
+  "_about": "Local corrections to the vendored enthec/webappanalyzer fingerprints. Each key is a technology name; its fields replace the upstream ones. Add a note and the date for every entry.",
+  "Onsen UI": {
+    "_note": "2026-11-25: upstream pattern '/.*onsen.*min\\.js' matched cookie-consent scripts (cookieconsent.min.js, site-consent-policy...min.js) on 267 sites. Onsen UI files are onsenui(.min).js / angular-onsenui(.min).js.",
+    "scriptSrc": [
+      "onsenui(?:\\.min)?\\.js"
+    ]
+  }
+}

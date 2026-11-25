@@ -57,6 +57,11 @@ describe('registry (normalize)', () => {
     cur = n.mergeSql(`SELECT ${base} FROM (${cur}) UNION ALL BY NAME ${n.aggregateSql(read([files[2]!, files[1]!]))}`);
     const inc = await q(n.deriveSql(cur, rules));
     expect(inc).toEqual(full);
+    // The production path: copy untouched rows, merge only domains seen again.
+    let into = n.aggregateSql(read([files[0]!]));
+    into = n.mergeIntoSql(into, n.aggregateSql(read([files[1]!])));
+    into = n.mergeIntoSql(into, n.aggregateSql(read([files[2]!, files[1]!])));
+    expect(await q(n.deriveSql(into, rules))).toEqual(full);
     expect(full).toHaveLength(4);
   });
 

@@ -63,3 +63,15 @@ describe('worker-thread pool gives identical results', () => {
     for (const p of Object.values(pages)) expect(await pool.analyze(p)).toEqual(engine.analyze(p));
   }, 60_000);
 });
+
+describe('local fingerprint overrides (packages/fingerprints/overrides.json)', () => {
+  const names = (src: string) => engine.analyze({ url: 'https://x.com/', html: `<script src="${src}"></script>`, headers: {}, cookies: [] }).map((t) => t.name);
+  it('cookie-consent scripts are not Onsen UI (real URLs seen on lead sites, 2026-11-25)', () => {
+    expect(names('https://cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.1.0/cookieconsent.min.js')).not.toContain('Onsen UI');
+    expect(names('https://static.parastorage.com/services/site-consent-policy/1.10.0/site-consent-policy.umd.min.js')).not.toContain('Onsen UI');
+  });
+  it('real Onsen UI files are still detected', () => {
+    expect(names('https://unpkg.com/onsenui/js/onsenui.min.js')).toContain('Onsen UI');
+    expect(names('/lib/angular-onsenui.min.js')).toContain('Onsen UI');
+  });
+});

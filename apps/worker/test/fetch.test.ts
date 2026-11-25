@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { extractFeatures } from '../src/stages/fetch/extract.js';
+import * as cheerio from 'cheerio';
+import { extractFeatures, firstH1 } from '../src/stages/fetch/extract.js';
 import { TAG_SEP, detectPlatforms, parsePattern, primaryPlatform } from '../src/stages/fetch/platform.js';
 import { tagPage, type TagRule } from '../src/stages/fetch/tags.js';
 import { errorKind } from '../src/stages/fetch/stage.js';
@@ -62,5 +63,22 @@ describe('errorKind', () => {
   it('classifies TLS and connection errors', () => {
     expect(errorKind(Object.assign(new Error('x'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }))).toBe('tls_error');
     expect(errorKind(Object.assign(new Error('x'), { cause: { code: 'ECONNRESET' } }))).toBe('connection_error');
+  });
+});
+
+describe('H1 heading', () => {
+  it('skips an image-only logo H1 and reads the real heading (annamuseo.com, Shopify, fetched 2026-11-25)', () => {
+    const html = gunzipSync(readFileSync(new URL('./fixtures/audit/annamuseo-logo-h1.html.gz', import.meta.url))).toString('utf8');
+    expect(cheerio.load(html)('h1').first().text().trim()).toBe(''); // the old rule saw this and said "no H1"
+    expect(firstH1(cheerio.load(html))).toBe('ancient skincare rituals');
+  });
+  it('an image-only H1 counts through its alt text; no H1 at all is null', () => {
+    expect(firstH1(cheerio.load('<h1><a href="/"><img src="l.svg" alt="Acme Studio"></a></h1><p>x</p>'))).toBe('Acme Studio');
+    expect(firstH1(cheerio.load('<h1><img src="l.svg"></h1><h2>Hi</h2>'))).toBeNull();
+    expect(firstH1(cheerio.load('<p>no heading</p>'))).toBeNull();
+    // Real pattern (24ktconcierge.com): lazy logo + <noscript> copy inside the H1.
+    expect(firstH1(cheerio.load('<h1><a href="/"><img class="lazyload" src="a.png" alt="24kt Concierge Logo"><noscript><img src="a.png" alt="24kt Concierge Logo"></noscript></a></h1>')))
+      .toBe('24kt Concierge Logo');
+    expect(firstH1(cheerio.load('<h1><noscript><img src="a.png"></noscript></h1>'))).toBeNull();
   });
 });

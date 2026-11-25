@@ -47,6 +47,24 @@ export function visibleText($: cheerio.CheerioAPI, root = 'body'): string {
 }
 const cut = (s: string | undefined | null, n: number) => (s ? squash(s).slice(0, n) || null : null);
 
+/**
+ * Text of the first H1 that says something. Many Shopify themes wrap the logo in an H1 that holds only an
+ * image, before the real headings; reading just the first H1 reported "no H1" for those sites.
+ * An image-only H1 counts through its alt text (that is what search engines read).
+ */
+export function firstH1($: cheerio.CheerioAPI): string | null {
+  let alt: string | null = null;
+  for (const el of $('h1').toArray()) {
+    // <noscript> content is read as raw markup text; it and scripts are not visible heading text.
+    const h = $(el).clone();
+    h.find('noscript, script, style, template').remove();
+    const text = cut(h.text(), 300);
+    if (text) return text;
+    alt ??= cut(h.find('img[alt]').first().attr('alt'), 300);
+  }
+  return alt;
+}
+
 export function extractFeatures(
   html: string,
   pageUrl: string,
@@ -107,7 +125,7 @@ export function extractFeatures(
   return {
     title: cut($('title').first().text(), 300),
     meta_description: cut(meta['description'] ?? meta['og:description'], 500),
-    h1: cut($('h1').first().text(), 300),
+    h1: firstH1($),
     lang: cut($('html').attr('lang'), 20),
     site_name: cut(meta['og:site_name'] ?? meta['application-name'], 200),
     generator: cut(meta['generator'], 200),

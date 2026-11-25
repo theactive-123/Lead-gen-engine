@@ -58,6 +58,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` | Memory and CPU threads for bulk data scans. Lower on small machines | `2GB` / `4` |
 | `DUCKDB_MAX_TEMP` | Most disk DuckDB may use for very big queries (a query fails and retries instead of filling the disk) | `4GB` |
 | `DNS_MODE` | Empty = use the dashboard setting (`udp`, fastest). `doh` = DNS over HTTPS, only if your network blocks normal DNS | empty |
+| `CHROME_PATH` | Chrome/Chromium for Lighthouse. The Docker worker already has Chromium; set this only when running the worker outside Docker | empty |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
 
@@ -142,9 +143,47 @@ Commands: `jobs normalize`, `jobs plan` (see "Everyday commands").
 **Things to know**
 - Technology detection reads the HTML only. Tools that load later (e.g. pixels added by Google Tag Manager or Shopify's
   pixel manager) can be missed, so "no pixel found" is not proof of "no ads" — the browser check in Phase 7 confirms.
+- Fingerprint data is vendored from `enthec/webappanalyzer` (`packages/fingerprints/update.sh` refreshes it). Upstream
+  patterns we found wrong on real pages are corrected in `packages/fingerprints/overrides.json`, which the update keeps.
 - Pages are fetched politely: robots.txt is respected, at most 1 request per second per website.
 - Backpressure: fetching pauses while many pages wait for technology detection (HTML is kept 3 days), and DNS
   pauses while many domains wait for fetching.
+
+---
+
+## Website audits (Phase 7)
+
+Two audit stages run after contacts and signals:
+
+| Stage | Runs on | What it does | Output |
+|---|---|---|---|
+| 9 Light audit (`stage.audit`) | every in-niche lead | 27 fast checks without a browser, from the saved homepage plus a few small requests (≤1 per second per site, robots.txt respected) | `data/lake/audits/`, Postgres `audits` + `audit_findings` (source `light`) |
+| 10 Lighthouse (`stage.lighthouse`) | top tier only | Google Lighthouse, run **locally** in headless Chrome (mobile preset, no API key): performance, accessibility, best practices and SEO scores, plus load speed (LCP), layout shift (CLS) and blocking time (TBT) | `data/lake/lighthouse/`, Postgres `audits.lighthouse` + `audit_findings` (source `lighthouse`) |
+
+**Light audit checks:** title / meta description / H1 / viewport, slow server, heavy page, too many or render-blocking
+scripts, old image formats (JPG/PNG where the platform does not convert them), images without alt text, mixed content,
+outdated jQuery / WordPress, old copyright year, broken links (sample, only 404/410 count), favicon, http→https,
+contact form, and per-niche gaps: no email marketing tool / no email signup / no reviews (stores), no online booking
+(studios), no analytics. Website builders (Wix, Squarespace, Weebly, GoDaddy) are tagged as information.
+Every finding has a `code`, `severity` (high / medium / low / info), a plain-English message and the evidence.
+
+**Who gets Lighthouse:** a preliminary score from data we already have (email found, named email, niche confidence,
+completeness, recent activity, number of problems). Leads at or above `lighthouse.prelim.min_score` (default 70,
+about the top 20%) are audited, best first. A failed run (timeout, crash) is tried again after 7 days.
+
+**Lighthouse also corrects the light audit:** the browser sees tools that load later (e.g. Klaviyo or a pixel added by a
+tag manager). Those are saved as technologies with source `runtime`, and a light finding they disprove
+(e.g. "no email marketing tool") is removed.
+
+**Settings** (in the `settings` table): `audit.rules` (every threshold and list above), `lighthouse.prelim`,
+`lighthouse.rules` (Google's "poor" thresholds), `lighthouse.parallel` (Chrome instances, about 1 per CPU core),
+`lighthouse.timeout_ms` (90 s; heavy pages need 60+ s).
+
+**Things to know**
+- Lighthouse scores move between runs (network, server load); treat a score as a range of about ±10, not an exact number.
+- The light audit reads the HTML the server sends. A heading or form added later by JavaScript can be missed
+  (seen on 1 of 20 checked "no H1" sites). Lighthouse runs a real browser, so top-tier leads are checked properly.
+- Each Lighthouse run is its own process with its own Chrome: Lighthouse cannot run twice in one process.
 
 ---
 

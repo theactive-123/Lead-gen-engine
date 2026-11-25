@@ -80,6 +80,20 @@ export function mergeSql(from: string): string {
     FROM (${from}) GROUP BY domain`;
 }
 
+/**
+ * Merge new rows into the registry without regrouping all of it. Only domains that appear in `fresh`
+ * can change, so those are merged with mergeSql; every other registry row is copied as it is.
+ * Why: grouping the whole registry (10.8M domains with list columns) spilled more than DuckDB's 4 GB
+ * temp cap and every normalize run failed. This needs a hash table of the new domains only.
+ */
+export function mergeIntoSql(base: string, fresh: string): string {
+  return `
+    WITH f AS (SELECT ${BASE_COLS} FROM (${fresh})), b AS (SELECT ${BASE_COLS} FROM (${base}))
+    SELECT ${BASE_COLS} FROM b ANTI JOIN f USING (domain)
+    UNION ALL BY NAME
+    ${mergeSql(`SELECT ${BASE_COLS} FROM b SEMI JOIN f USING (domain) UNION ALL BY NAME SELECT ${BASE_COLS} FROM f`)}`;
+}
+
 /** Add tld, drop_reason and priority to base rows using the editable rules. */
 export function deriveSql(base: string, r: NormalizeRules): string {
   // Best source wins (not the first listed): a Common Crawl shop that also gets a new certificate
@@ -165,7 +179,7 @@ export async function normalize(): Promise<Record<string, unknown>> {
         const freshRows = `SELECT ${BASE_COLS} FROM read_parquet(${sqlLiteral(fresh)})`;
         if (!base) { base = freshRows; continue; }
         const merged = path.join(dir, `base.${stamp}.${i}.tmp`);
-        await lakeRun(`COPY (${mergeSql(`${base} UNION ALL BY NAME ${freshRows}`)}) TO ${sqlLiteral(merged)} (FORMAT parquet, COMPRESSION zstd)`);
+        await lakeRun(`COPY (${mergeIntoSql(base, freshRows)}) TO ${sqlLiteral(merged)} (FORMAT parquet, COMPRESSION zstd)`);
         temps.push(merged);
         base = `SELECT ${BASE_COLS} FROM read_parquet(${sqlLiteral(merged)})`;
       }

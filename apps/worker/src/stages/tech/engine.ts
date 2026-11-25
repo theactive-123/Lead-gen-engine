@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import * as cheerio from 'cheerio';
@@ -125,6 +125,15 @@ export class TechEngine {
     this.categories = new Map(Object.entries(cats).map(([id, c]) => [Number(id), c.name]));
     const raw: Record<string, any> = {};
     for (const f of readdirSync(path.join(dir, 'technologies'))) if (f.endsWith('.json')) Object.assign(raw, JSON.parse(readFileSync(path.join(dir, 'technologies', f), 'utf8')));
+    // Local fixes for upstream patterns that we found to be wrong on real pages (kept outside the vendored
+    // folder, so update.sh does not erase them). Each entry replaces the named fields of one technology.
+    const overrides = path.join(dir, 'overrides.json');
+    if (existsSync(overrides)) {
+      for (const [name, fields] of Object.entries(JSON.parse(readFileSync(overrides, 'utf8')) as Record<string, Record<string, unknown>>)) {
+        if (name.startsWith('_') || !raw[name]) continue;
+        raw[name] = { ...raw[name], ...fields };
+      }
+    }
     this.techs = Object.entries(raw).map(([name, t]) => ({
       name,
       cats: (t.cats ?? []) as number[],

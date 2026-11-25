@@ -2,6 +2,7 @@ import { datasetExists, datasetGlob, db, env, htmlFor, lakeQuery, setting, sqlLi
 import { registrableDomain } from '../../sources/normalize.js';
 import { pickPages } from '../contacts/stage.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from '../fetch/client.js';
+import { firstH1 } from '../fetch/extract.js';
 import { RobotsCache } from '../fetch/robots.js';
 import { loadBatch, type StagePlan } from '../plan.js';
 import { TechEngine, deferredScriptUrls } from '../tech/engine.js';
@@ -129,6 +130,8 @@ export async function runAuditBatch(snapshot: string, batch: number): Promise<Re
       }
       const origin = new URL(page.final_url).origin;
       const homeHtml = html.get(row.domain) ?? null;
+      // Pages fetched before 2026-11-25 saved only the first H1 (often an image-only logo): read it again.
+      if (homeHtml && !page.h1?.trim()) page.h1 = firstH1(cheerio.load(homeHtml));
       const ts = [...(techs.get(row.domain) ?? [])];
       const added: Tech[] = [];
       if (homeHtml) {
