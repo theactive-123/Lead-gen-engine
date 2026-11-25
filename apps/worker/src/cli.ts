@@ -10,6 +10,8 @@ import { probePlan } from './stages/probe/stage.js';
 import { classifyPlan } from './stages/classify/stage.js';
 import { contactsPlan } from './stages/contacts/stage.js';
 import { signalsPlan } from './stages/signals/stage.js';
+import { auditPlan } from './stages/audit/stage.js';
+import { lighthousePlan } from './stages/lighthouse/stage.js';
 
 /**
  * Small command line for operators:
@@ -18,7 +20,7 @@ import { signalsPlan } from './stages/signals/stage.js';
  *   pnpm jobs source ct                     -> run a source right now in this process (no queue)
  *   pnpm jobs health                        -> check every source is reachable
  *   pnpm jobs normalize                     -> rebuild the domain registry now
- *   pnpm jobs plan                          -> plan DNS + fetch batches now
+ *   pnpm jobs plan                          -> plan batches for every pipeline stage now
  */
 const [cmd, name, json] = process.argv.slice(2);
 const boss = await queue();
@@ -26,7 +28,7 @@ const boss = await queue();
 if (cmd === 'normalize') {
   console.log(await normalize());
 } else if (cmd === 'plan') {
-  console.log({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan), tech: await planStage(techPlan), probe: await planStage(probePlan), classify: await planStage(classifyPlan), contacts: await planStage(contactsPlan), signals: await planStage(signalsPlan) });
+  console.log({ dns: await planStage(dnsPlan), fetch: await planStage(fetchPlan), tech: await planStage(techPlan), probe: await planStage(probePlan), classify: await planStage(classifyPlan), contacts: await planStage(contactsPlan), signals: await planStage(signalsPlan), audit: await planStage(auditPlan), lighthouse: await planStage(lighthousePlan) });
 } else if (cmd === 'source' && name) {
   console.log(await runSource(name));
 } else if (cmd === 'health') {

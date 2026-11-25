@@ -94,6 +94,27 @@ function parseDom(v: unknown): DomPat[] {
   return out;
 }
 
+/**
+ * Script URLs a page loads without a plain <script src>: Shopify's app loader lists app scripts in an
+ * inline `var urls = [...]` array (asyncLoad), and speed plugins rename src to data-src /
+ * data-rocket-src / data-lazy-src. Verified on real stores 2026-11-25 (e.g. Mailchimp via chimpstatic.com).
+ */
+export function deferredScriptUrls($: cheerio.CheerioAPI, html: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/var urls = (\[[^\]]*\]);/g)) {
+    try {
+      for (const u of JSON.parse(m[1]!) as unknown[]) if (typeof u === 'string') out.push(u.startsWith('//') ? `https:${u}` : u);
+    } catch {
+      /* not the Shopify loader */
+    }
+  }
+  $('script[data-src], script[data-rocket-src], script[data-lazy-src]').each((_, el) => {
+    const u = $(el).attr('data-rocket-src') ?? $(el).attr('data-lazy-src') ?? $(el).attr('data-src');
+    if (u) out.push(u);
+  });
+  return out;
+}
+
 export class TechEngine {
   readonly techs: Tech[];
   readonly categories: Map<number, string>;
@@ -139,7 +160,8 @@ export class TechEngine {
       const v = $(el).attr('content');
       if (k && v !== undefined) meta.set(k, [...(meta.get(k) ?? []), v]);
     });
-    const scriptSrc = $('script[src]').map((_, el) => $(el).attr('src') ?? '').get().filter(Boolean).map((x) => x.replace(/[\r\n]/g, ''));
+    const scriptSrc = [...$('script[src]').map((_, el) => $(el).attr('src') ?? '').get(), ...deferredScriptUrls($, html)]
+      .filter(Boolean).map((x) => x.replace(/[\r\n]/g, ''));
     // Any match inside one URL is also a match in the newline-joined list (with the "m" flag),
     // so a pattern that fails on the joined list cannot match any single URL: skip it.
     const scriptSrcJoined = scriptSrc.join('\n');

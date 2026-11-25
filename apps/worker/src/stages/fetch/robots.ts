@@ -35,6 +35,18 @@ export class RobotsCache {
     return p;
   }
 
+  /**
+   * Seed the cache with a robots.txt we already stored (saves one request per site). Only complete
+   * copies are accepted: a copy cut at the storage limit could miss a "Disallow" rule at its end.
+   */
+  prime(origin: string, text: string, storedLimit = 20_000): boolean {
+    if (this.cache.has(origin) || text.length >= storedLimit) return false;
+    const url = `${origin}/robots.txt`;
+    const parser = robotsParser(url, text);
+    this.cache.set(origin, Promise.resolve({ allowed: true, reason: 'rules' as const, text, parser, crawlDelay: parser.getCrawlDelay(this.agentName) }));
+    return true;
+  }
+
   async check(url: string): Promise<RobotsVerdict> {
     const v = await this.load(new URL(url).origin);
     if (v.parser) {

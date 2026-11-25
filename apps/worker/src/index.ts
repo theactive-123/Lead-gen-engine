@@ -11,6 +11,8 @@ import { probePlan, runProbeBatch } from './stages/probe/stage.js';
 import { classifyPlan, runClassifyBatch } from './stages/classify/stage.js';
 import { contactsPlan, runContactsBatch } from './stages/contacts/stage.js';
 import { runSignalsBatch, signalsPlan } from './stages/signals/stage.js';
+import { auditPlan, runAuditBatch } from './stages/audit/stage.js';
+import { lighthousePlan, runLighthouseBatch } from './stages/lighthouse/stage.js';
 import { beat, diskUsage, heartbeat, lakeSelftest } from './jobs/system.js';
 
 /**
@@ -68,10 +70,12 @@ await ensureQueue(boss, 'stage.probe', { expireInSeconds: 1800 });
 await ensureQueue(boss, 'stage.classify', { expireInSeconds: 1800 });
 await ensureQueue(boss, 'stage.contacts', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.signals', { expireInSeconds: 3600 });
+await ensureQueue(boss, 'stage.audit', { expireInSeconds: 3600 });
+await ensureQueue(boss, 'stage.lighthouse', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
 // Each stage is planned on its own: one failing stage (logged with its name) must not block the others.
-const plans = [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan];
+const plans = [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan, auditPlan, lighthousePlan];
 await boss.work('stage.plan', logged('stage.plan', async () => {
   const out: Record<string, unknown> = {};
   for (const p of plans) {
@@ -92,6 +96,9 @@ await boss.work<Batch>('stage.probe', { localConcurrency: 2 }, logged<Batch>('st
 await boss.work<Batch>('stage.classify', { localConcurrency: 1 }, logged<Batch>('stage.classify', (d) => runClassifyBatch(d.snapshot, d.batch)));
 await boss.work<Batch>('stage.contacts', { localConcurrency: 2 }, logged<Batch>('stage.contacts', (d) => runContactsBatch(d.snapshot, d.batch)));
 await boss.work<Batch>('stage.signals', { localConcurrency: 1 }, logged<Batch>('stage.signals', (d) => runSignalsBatch(d.snapshot, d.batch)));
+await boss.work<Batch>('stage.audit', { localConcurrency: 2 }, logged<Batch>('stage.audit', (d) => runAuditBatch(d.snapshot, d.batch)));
+// One Lighthouse batch at a time per worker: the batch itself runs `lighthouse.parallel` Chrome instances.
+await boss.work<Batch>('stage.lighthouse', { localConcurrency: 1 }, logged<Batch>('stage.lighthouse', (d) => runLighthouseBatch(d.snapshot, d.batch)));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
 await boss.schedule('stage.normalize', '*/15 * * * *');
 await boss.schedule('stage.plan', '* * * * *');

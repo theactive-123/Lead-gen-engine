@@ -15,6 +15,7 @@ const schema = z.object({
   DUCKDB_THREADS: z.coerce.number().int().positive().default(4),
   /** Most disk DuckDB may use to spill big queries (fails the query instead of filling the disk). */
   DUCKDB_MAX_TEMP: z.string().default('4GB'),
+  CHROME_PATH: z.string().optional(), // Chrome/Chromium binary for Lighthouse (the worker image sets it)
 });
 
 export type Env = z.infer<typeof schema>;

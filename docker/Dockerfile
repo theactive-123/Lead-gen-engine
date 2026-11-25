@@ -19,6 +19,9 @@ RUN --mount=type=secret,id=ca,required=false \
 
 # Worker: runs TypeScript directly with tsx (no build step).
 FROM deps AS worker
+# Chromium for Lighthouse audits (Debian package, no Google account or key needed).
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation && rm -rf /var/lib/apt/lists/*
+ENV CHROME_PATH=/usr/bin/chromium
 COPY packages packages
 COPY apps/worker apps/worker
 # Pre-install DuckDB's httpfs extension (reads Common Crawl Parquet over HTTPS).

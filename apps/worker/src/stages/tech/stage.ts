@@ -79,7 +79,8 @@ export async function runTechBatch(snapshot: string, batch: number): Promise<Rec
     const client = await db().connect();
     try {
       await client.query('BEGIN');
-      await client.query(`DELETE FROM technologies t USING domains d WHERE t.domain_id = d.id AND d.domain = ANY($1::text[])`, [rows.map((r) => r.domain)]);
+      // Only this stage's own rows: technologies seen at runtime (Lighthouse) are kept.
+      await client.query(`DELETE FROM technologies t USING domains d WHERE t.domain_id = d.id AND d.domain = ANY($1::text[]) AND t.source = 'html'`, [rows.map((r) => r.domain)]);
       if (pg.length) {
         await client.query(
           `INSERT INTO technologies (domain_id, tech, categories, version, confidence)
