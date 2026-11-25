@@ -110,6 +110,41 @@ Run on real data in this sandbox (1 worker). Numbers below are the drained end s
 - Stale reads ("TProtocolException") after the registry was replaced under the same path → DuckDB external file cache off,
   versioned registry files + `CURRENT` pointer, planner snapshots written atomically, each stage planned independently.
 
+## Phase 7 — Website audits (done 2026-11-25)
+Run on real data in this sandbox (4 vCPU / 15 GB, 1 worker).
+
+**Light audit (stage 9)** — 27 checks, no browser, all 23,949 in-niche leads in 67 min (~21k leads/hour with the rest of the
+pipeline idle; trial batches ran at ~40k/hour). Avg 3.6 findings per lead, median 3; 981 leads with none.
+- Top findings: no email marketing tool 11,040 (75% of DTC, HTML only), old image formats 8,820, no reviews 6,631 (45% of DTC),
+  missing H1 6,045, render-blocking scripts 5,849, no analytics 4,966, no email signup 4,900, slow server 4,318 (+1,909 very slow).
+- By platform: WooCommerce has the most problems (avg 3.9 high/medium, 67% old images, 45% slow server); Shopify, Squarespace
+  and Wix convert images automatically (0–2% old images).
+- Wellness: 46% have no online booking. White-label: 47% old images, 28% no analytics.
+- Browser verification, two rounds: 153 cases first (6 rule errors found and fixed), then 80 fresh cases after the full run:
+  no analytics 10/10, no email tool 10/10, no reviews 10/10, no contact form 10/10, no email signup 10/10, missing H1 27/30.
+  H1 bug found: only the first H1 was read and Shopify themes wrap the logo image in it → `firstH1()` (first H1 with text,
+  else logo alt, ignores `<noscript>`). 3,895 false findings corrected in lake + Postgres. Remaining limit: H1 added by JavaScript (1/20).
+
+**Lighthouse (stage 10)** — Lighthouse 13.6 mobile preset, local headless Chrome, no key.
+- Top tier = preliminary score ≥ 70 → 4,571 leads (19%). (≥ 60 would be 49%.)
+- 136 sites scored so far: performance avg 47 / median 43.5 (63% "poor" < 50), accessibility 88, best practices 82, SEO 94,
+  median LCP 6.9 s (inflated by the sandbox proxy). Findings: TBT poor 110, LCP poor 102, performance poor 86.
+- Runtime check removed 7 light findings on 6 of 130 sites (no analytics 3, no reviews 2, email tool 1, signup 1).
+- Benchmark: 4 parallel = 384–477 sites/hour (CPU-bound: ~15 s per site alone, 31–43 s with 4 at once on 4 vCPU);
+  280/hour while the whole pipeline ran. Target 500/hour needs ~5+ cores. Success 59/60 standalone, 130/140 under full load.
+- Bug found: Lighthouse cannot run twice in one process ("performance mark has not been set", plus slowdowns → 16/60 failed).
+  Fix: one child process + one Chrome per run (`runner.ts`), killed if it hangs. Timeout 60 → 90 s (heavy pages need 61–65 s alone).
+  Failed runs retried after 7 days. Migration 018.
+- Docker worker image verified: Debian Chromium 156 installed, Lighthouse ran inside the container (31 s, all 4 scores).
+
+**Other bugs found & fixed in this phase**
+- Normalize failed on every run for ~20 h (registry 10.8M domains: regrouping all of it overflowed the 4 GB DuckDB temp cap).
+  Fix: merge only domains seen again (anti/semi join), copy the rest. 23 s, no spill; test proves equal to a full rebuild.
+  Backlog caught up: 10.84M → 11.77M domains. The planner errors in the same minutes came from the shared temp budget.
+- Fingerprint data: upstream "Onsen UI" pattern matched cookie-consent scripts (267 false tags). Local fix in
+  `packages/fingerprints/overrides.json` (kept by update.sh), false rows deleted.
+- 30-minute full-pipeline run after the fixes: 0 errors, every stage moved data.
+
 **Known limits / next**
 - One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,
   which then retries. Phase 11: limit concurrent heavy DuckDB jobs.
