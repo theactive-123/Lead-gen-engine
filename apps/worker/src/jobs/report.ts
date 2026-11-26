@@ -50,7 +50,7 @@ export async function buildReport(days: number) {
   const backlog: { stage: string; todo: number; per_day: number; days_to_clear: number | null; held: string | null }[] = [];
   for (const p of [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan, auditPlan, lighthousePlan]) {
     try {
-      const sql = await p.todoSql();
+      const sql = p.keysSql ? await p.keysSql() : await p.todoSql();
       const todo = sql ? Number((await lakeQuery<{ n: bigint }>(`SELECT count(*) AS n FROM (${sql})`))[0]!.n) : 0;
       const done = stages.find((s) => s.stage === `stage.${p.key}`)?.records ?? 0;
       const perDay = done / Math.max(1, days);

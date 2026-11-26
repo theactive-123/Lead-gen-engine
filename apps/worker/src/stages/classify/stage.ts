@@ -16,7 +16,8 @@ const STORE_TECHS = ['Squarespace Commerce', 'Wix eCommerce', 'Ecwid', 'Snipcart
 export const classifyPlan: StagePlan = {
   key: 'classify',
   defaults: { batch: 2000, snapshot: 20000 },
-  async todoSql() {
+  // Light: which domains need classifying (no page text). The planner picks the next snapshot from this.
+  async keysSql() {
     if (!(await datasetExists('pages')) || !(await datasetExists('tech'))) return null;
     const hasProbe = await datasetExists('store_probe');
     // "Re-classify all" (dashboard → Niches) sets classify.reclassify_after: anything classified before it is done again.
@@ -26,18 +27,30 @@ export const classifyPlan: StagePlan = {
     const done = (await datasetExists('classified'))
       ? `AND p.domain NOT IN (${currentSql({ dataset: 'classified', ts: 'classified_at' }, [{ dataset: 'tech', ts: 'analyzed_at' }, ...(hasProbe ? [{ dataset: 'store_probe', ts: 'probed_at' }] : [])], since)})`
       : '';
+    // Store platforms wait for their store probe first.
+    const probeReady = hasProbe
+      ? `AND (p.platform IS NULL OR p.platform NOT IN (${PROBE_PLATFORMS.map(sqlLiteral).join(', ')}) OR p.domain IN (SELECT domain FROM read_parquet(${datasetGlob('store_probe')})))`
+      : `AND (p.platform IS NULL OR p.platform NOT IN (${PROBE_PLATFORMS.map(sqlLiteral).join(', ')}))`;
+    return `
+      SELECT p.domain, p.priority FROM (
+        SELECT domain, max(priority) AS priority, arg_max(platform, fetched_at) AS platform
+        FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass GROUP BY domain) p
+      WHERE p.domain IN (SELECT domain FROM read_parquet(${datasetGlob('tech')})) ${probeReady} ${done}`;
+  },
+  // Heavy: page text, links, products — only for the domains the planner picked (`keys`).
+  async todoSql(keys?: string) {
+    if (!keys || !(await datasetExists('pages')) || !(await datasetExists('tech'))) return null;
+    const hasProbe = await datasetExists('store_probe');
+    const pick = `domain IN (SELECT domain FROM (${keys}))`;
     const probeJoin = hasProbe
       ? `LEFT JOIN (SELECT domain, arg_max(ok, probed_at) AS ok, arg_max(product_count, probed_at) AS product_count,
                           arg_max(count_method, probed_at) AS count_method, arg_max(sample_titles, probed_at) AS sample_titles,
                           arg_max(product_types, probed_at) AS product_types, arg_max(vendors, probed_at) AS vendors
-                   FROM read_parquet(${datasetGlob('store_probe')}) GROUP BY domain) s USING (domain)`
+                   FROM read_parquet(${datasetGlob('store_probe')}) WHERE ${pick} GROUP BY domain) s USING (domain)`
       : `LEFT JOIN (SELECT NULL::VARCHAR AS domain, NULL::BOOLEAN AS ok, NULL::INTEGER AS product_count, NULL::VARCHAR AS count_method,
                           NULL::VARCHAR[] AS sample_titles, NULL::VARCHAR[] AS product_types, NULL::VARCHAR[] AS vendors) s USING (domain)`;
-    const probeReady = hasProbe
-      ? `AND (p.platform IS NULL OR p.platform NOT IN (${PROBE_PLATFORMS.map(sqlLiteral).join(', ')}) OR p.domain IN (SELECT domain FROM read_parquet(${datasetGlob('store_probe')})))`
-      : `AND (p.platform IS NULL OR p.platform NOT IN (${PROBE_PLATFORMS.map(sqlLiteral).join(', ')}))`;
     const reg = existsSync(REGISTRY_FILE())
-      ? `LEFT JOIN (SELECT domain, cc_ecommerce, first_seen, sources FROM read_parquet(${sqlLiteral(REGISTRY_FILE())})) r USING (domain)`
+      ? `LEFT JOIN (SELECT domain, cc_ecommerce, first_seen, sources FROM read_parquet(${sqlLiteral(REGISTRY_FILE())}) WHERE ${pick}) r USING (domain)`
       : `LEFT JOIN (SELECT NULL::VARCHAR AS domain, NULL::INTEGER AS cc_ecommerce, NULL::TIMESTAMP AS first_seen, NULL::VARCHAR[] AS sources) r USING (domain)`;
     return `
       WITH p AS (
@@ -46,13 +59,12 @@ export const classifyPlan: StagePlan = {
                arg_max(text_sample, fetched_at) AS text_sample, arg_max(links_internal, fetched_at) AS links_internal,
                arg_max(final_url, fetched_at) AS final_url, arg_max(lang, fetched_at) AS lang, arg_max(tags, fetched_at) AS tags,
                arg_max(http_status, fetched_at) AS http_status, max(fetched_at) AS fetched_at
-        FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass GROUP BY domain
+        FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass AND ${pick} GROUP BY domain
       ),
-      t AS (SELECT domain, arg_max(names, analyzed_at) AS techs FROM read_parquet(${datasetGlob('tech')}) GROUP BY domain)
+      t AS (SELECT domain, arg_max(names, analyzed_at) AS techs FROM read_parquet(${datasetGlob('tech')}) WHERE ${pick} GROUP BY domain)
       SELECT p.*, t.techs, s.ok AS probe_ok, s.product_count, s.count_method, s.sample_titles, s.product_types, s.vendors,
              r.cc_ecommerce, r.first_seen, r.sources
-      FROM p JOIN t USING (domain) ${probeJoin} ${reg}
-      WHERE true ${probeReady} ${done}`;
+      FROM p JOIN t USING (domain) ${probeJoin} ${reg}`;
   },
 };
 

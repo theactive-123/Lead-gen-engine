@@ -34,6 +34,8 @@
   - Building images inside the Claude cloud sandbox needs a local, uncommitted compose override
     (build network host + HTTPS_PROXY + CA secret). The Dockerfile accepts an optional `ca` secret for that.
 - Phase 2 — Volume sources: done (2026-11-19), see report in the Phase 2 section below.
+- Phases 3–10: done (2026-11-24 … 2026-11-26), sections below.
+- Phase 11 — Hardening: done in the sandbox (2026-11-26); the 7-day run happens on the user's server (docs/DEPLOY.md).
 
 ## Phase 2 notes
 - Source plugins: `apps/worker/src/sources/` (tranco, whoisds, ct, commoncrawl). Runner writes
@@ -240,6 +242,46 @@ Migration 021 (`exports` history, `exported_leads` per brand). exceljs 4.4.0 (MI
   at run time → `turbopackIgnore` on that path; bundle 96 → 64 MB, warning gone. (Docker builds were not affected: `data` is in .dockerignore.)
 - Excel streaming: a row cannot be styled after commit (first export crashed) → styled before commit.
 - Test exports, marks and the test do-not-contact entry were removed afterwards, so the first real export starts clean.
+
+## Phase 11 — Hardening and going live (2026-11-26)
+
+**Built**
+- Re-check schedule (spec §12): every stage counts a domain as done only when its result is newer than its input
+  (`currentSql`), so a re-fetched page flows through tech → probe → niche → contacts → signals → audit in order.
+  DNS and homepage failures retried 7/21/45 days after the first attempt; in-niche sites re-fetched every 30 days;
+  robots.txt refusals / off-site redirects never retried. Tested on a synthetic lake with dates relative to now.
+  Found while checking disk use: a usable page whose HTML expired before technology detection ran would be stuck
+  forever → it is fetched again (0 such pages existed; 12,750 were waiting with HTML still present).
+- Forget: "Delete and suppress" → registry marks the domain `suppressed` (never crawled again) and `system.forget`
+  rewrites every lake file without it. Tested on a real lead: 10 rows in 10 datasets removed, every dataset exactly
+  1 row smaller, registry kept only the marker.
+- Compaction (daily): 6,417 → 92 files in 19 s, identical row and domain counts in all 10 datasets, identical planner
+  to-do counts, planning up to 3× faster. Registry build then read 0 new files (merged candidate files recognised).
+- One heavy lake job at a time across workers (Postgres advisory lock): registry, funnel, compaction, forget.
+- Circuit breaker per source (3 real failures in a row → 30 min pause, doubling to 24 h; restarts ignored).
+- Daily report (Overview card) and `jobs report 7`. A stage paused by backpressure is not called the bottleneck.
+- Nightly `pg_dump` backup service (7 days); restored into a scratch database: identical counts.
+- docs/DEPLOY.md: own PC and Oracle Cloud Always Free step by step. Oracle's page (checked 2026-11-26) says the free
+  Arm server is **2 OCPU / 12 GB** (not 4 / 24 as often quoted), 200 GB disk in total, 10 TB egress, reclaim when idle.
+
+**One-command run in the sandbox** (`docker compose up -d`: postgres + worker + web + backup), unattended.
+Found and fixed during it (both would have hit the 2-core / 12 GB server):
+- Niche planning loaded the page text of every page before choosing what to classify → out of memory at the 2 GB
+  DuckDB setting. Planner now has a light "which domains" step and reads heavy columns only for the chosen snapshot
+  (all stages plan at 1 GB now). Contacts / signals planners read other datasets only for the domains they need.
+- Queue connection pool (5) too small for ~30 queues ("timeout exceeded when trying to connect") → 10; main pool 15.
+
+Result of the run (16:35–17:17 UTC, sandbox 4 vCPU, behind a proxy, worker restarted twice on purpose for the fixes):
+all four containers up the whole time; after the second restart 136 runs finished, 0 failed, 0 errors in the log.
+Per 5 minutes: homepages 2,400–3,600, technologies 600–800, every later stage keeping up.
+`jobs report 1` (run inside the container): fetch paused by backpressure (technology backlog 20,541 > 20,000), DNS
+paused because fetch is behind, **bottleneck = technology detection** (CPU-bound, ~12k pages/hour here) — on a
+2-core server expect roughly half. That is still ~4M pages a month, far above what 1M new domains/month needs.
+
+**Not done here (needs the real server):** the 7-day unattended run — this sandbox restarts every few hours and has
+~40 GB of disk. `docs/DEPLOY.md` → "The first 7 days" says what to send back. Sandbox-only setting changes
+(not in migrations): `disk.min_free_gb` = 5, `stage.fetch.max_tech_backlog` restored to 20000.
+
 
 **Known limits / next**
 - One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,

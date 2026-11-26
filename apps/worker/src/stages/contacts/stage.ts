@@ -24,7 +24,8 @@ export const contactsPlan: StagePlan = {
     return `
       WITH k AS (SELECT domain, arg_max(in_scope, classified_at) AS in_scope FROM read_parquet(${datasetGlob('classified')}) GROUP BY domain),
            p AS (SELECT domain, max(priority) AS priority, arg_max(final_url, fetched_at) AS final_url, arg_max(links_internal, fetched_at) AS links_internal
-                 FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass GROUP BY domain)
+                 FROM read_parquet(${datasetGlob('pages')}, union_by_name = true)
+                 WHERE pass AND domain IN (SELECT domain FROM k WHERE in_scope) GROUP BY domain) -- link lists only for in-niche sites
       SELECT k.domain, p.priority, p.final_url, p.links_internal, s.store_country
       FROM k JOIN p USING (domain) ${probe}
       WHERE k.in_scope ${done}`;

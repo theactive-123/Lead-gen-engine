@@ -21,13 +21,14 @@ export const signalsPlan: StagePlan = {
       : `LEFT JOIN (SELECT NULL::VARCHAR domain, NULL::INT product_count, NULL::TIMESTAMP last_pub, NULL::TIMESTAMP newest_created, NULL::VARCHAR store_country,
                           NULL::VARCHAR store_province, NULL::VARCHAR store_city, NULL::VARCHAR currency, NULL::VARCHAR shop_name) s USING (domain)`;
     return `
+      -- Every other input is read only for the domains that have contacts (memory stays small at millions of domains).
       WITH c AS (SELECT domain, arg_max(COLUMNS(* EXCLUDE (domain)), extracted_at) FROM read_parquet(${datasetGlob('contacts')}) GROUP BY domain),
            p AS (SELECT domain, max(priority) priority, arg_max(links_internal, fetched_at) links_internal, arg_max(copyright_year, fetched_at) copyright_year,
                         arg_max(site_name, fetched_at) site_name, arg_max(title, fetched_at) title, arg_max(platform, fetched_at) platform
-                 FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass GROUP BY domain),
-           t AS (SELECT domain, arg_max(techs, analyzed_at) techs FROM read_parquet(${datasetGlob('tech')}) GROUP BY domain),
-           d AS (SELECT domain, arg_max(mx, resolved_at) mx FROM read_parquet(${datasetGlob('dns')}) GROUP BY domain),
-           r AS (SELECT domain, tranco_rank, cc_pages, first_seen, ct_first_cert, registered FROM read_parquet(${sqlLiteral(REGISTRY_FILE())}))
+                 FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass AND domain IN (SELECT domain FROM c) GROUP BY domain),
+           t AS (SELECT domain, arg_max(techs, analyzed_at) techs FROM read_parquet(${datasetGlob('tech')}) WHERE domain IN (SELECT domain FROM c) GROUP BY domain),
+           d AS (SELECT domain, arg_max(mx, resolved_at) mx FROM read_parquet(${datasetGlob('dns')}) WHERE domain IN (SELECT domain FROM c) GROUP BY domain),
+           r AS (SELECT domain, tranco_rank, cc_pages, first_seen, ct_first_cert, registered FROM read_parquet(${sqlLiteral(REGISTRY_FILE())}) WHERE domain IN (SELECT domain FROM c))
       SELECT c.domain, p.priority, p.links_internal, p.copyright_year, p.site_name, p.title, p.platform, t.techs, d.mx,
              r.tranco_rank, r.cc_pages, r.first_seen, r.ct_first_cert, r.registered,
              c.sitemap_count, c.sitemap_kind, c.address, c.phone, c.org_name,

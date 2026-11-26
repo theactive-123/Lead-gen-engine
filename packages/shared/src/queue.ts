@@ -26,7 +26,8 @@ let boss: PgBoss | undefined;
 /** Starts pg-boss (it creates its own "pgboss" schema in Postgres on first start). */
 export async function queue(): Promise<PgBoss> {
   if (boss) return boss;
-  const b = new PgBoss({ connectionString: env().DATABASE_URL, max: 5 });
+  // 10 connections: ~30 queues poll for work; 5 caused "timeout exceeded when trying to connect" under load.
+  const b = new PgBoss({ connectionString: env().DATABASE_URL, max: 10 });
   b.on('error', (err) => logger.error({ err }, 'queue error'));
   await b.start();
   await b.createQueue(DEAD_LETTER).catch(() => {});

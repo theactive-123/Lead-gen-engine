@@ -16,7 +16,16 @@ import { datasetGlob as datasetGlobFor, ensureQueue, getCheckpoint, lakeDir, lak
  */
 export interface StagePlan {
   key: string;                 // stage key; queue is `stage.<key>`
-  todoSql: () => Promise<string | null>; // SELECT domain, priority, ...extra columns; null = nothing to do
+  /**
+   * SELECT domain, priority, ...extra columns; null = nothing to do. When the stage also has `keysSql`, it receives
+   * `keys` (a query of the domains picked for this snapshot) and must only read heavy columns for those domains.
+   */
+  todoSql: (keys?: string) => Promise<string | null>;
+  /**
+   * Optional, for stages with heavy inputs (page text, link lists): SELECT domain, priority of everything still to do,
+   * using light columns only. The planner picks the next snapshot from it first, so memory stays small at millions of pages.
+   */
+  keysSql?: () => Promise<string | null>;
   /** Optional: a reason to hold planning (e.g. the next stage has a big backlog), else null. */
   hold?: () => Promise<string | null>;
   defaults: { batch: number; snapshot: number };
@@ -50,13 +59,19 @@ export async function planStage(plan: StagePlan): Promise<{ planned: number; bat
   const held = await plan.hold?.();
   if (held) return { skipped: held };
 
-  const todo = await plan.todoSql();
-  if (!todo) return { skipped: 'input not available yet' };
-
   const recent = (await getCheckpoint<string[]>(`plan:${plan.key}`)) ?? [];
   const exclude = recent.length
     ? `WHERE domain NOT IN (SELECT domain FROM read_parquet([${recent.map((id) => sqlLiteral(snapshotFile(plan.key, id))).join(', ')}]))`
     : '';
+  let todo: string | null;
+  if (plan.keysSql) {
+    const keys = await plan.keysSql();
+    if (!keys) return { skipped: 'input not available yet' };
+    todo = await plan.todoSql(`SELECT domain FROM (${keys}) k ${exclude} ORDER BY priority DESC, domain LIMIT ${Number(snapshotSize)}`);
+  } else {
+    todo = await plan.todoSql();
+  }
+  if (!todo) return { skipped: 'input not available yet' };
   const id = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const file = snapshotFile(plan.key, id);
   await mkdir(path.dirname(file), { recursive: true });

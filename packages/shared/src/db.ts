@@ -5,7 +5,8 @@ let pool: pg.Pool | undefined;
 
 /** Shared connection pool to the lead database (PostgreSQL). */
 export function db(): pg.Pool {
-  pool ??= new pg.Pool({ connectionString: env().DATABASE_URL, max: 10 });
+  // 15 per worker process: stages, scoring and the heavy-job lock run at the same time (3 workers + dashboard stay below Postgres' 100).
+  pool ??= new pg.Pool({ connectionString: env().DATABASE_URL, max: 15 });
   return pool;
 }
 
