@@ -14,6 +14,7 @@ import { runSignalsBatch, signalsPlan } from './stages/signals/stage.js';
 import { auditPlan, runAuditBatch } from './stages/audit/stage.js';
 import { lighthousePlan, runLighthouseBatch } from './stages/lighthouse/stage.js';
 import { runScoring } from './stages/score/stage.js';
+import { buildExport, dailyExports } from './stages/export/build.js';
 import { beat, diskUsage, fingerprintInfo, heartbeat, lakeSelftest } from './jobs/system.js';
 import { FINGERPRINTS_DIR, TechEngine } from './stages/tech/engine.js';
 import { funnel, sourceHealth } from './jobs/funnel.js';
@@ -96,6 +97,8 @@ await ensureQueue(boss, 'stage.audit', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.lighthouse', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.score', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'segments.refresh', { exclusive: true, expireInSeconds: 3600 });
+await ensureQueue(boss, 'exports.build', { expireInSeconds: 3600 });
+await ensureQueue(boss, 'exports.daily', { exclusive: true, expireInSeconds: 3 * 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.funnel', { exclusive: true, expireInSeconds: 1800 });
 await ensureQueue(boss, 'system.source-health', { exclusive: true, expireInSeconds: 600 });
@@ -128,6 +131,9 @@ await boss.work<Batch>('stage.lighthouse', { localConcurrency: 1 }, logged<Batch
 // Scoring: brand matches + first lines for leads whose data changed (everything when the brand setup changed).
 await boss.work<{ full?: boolean }>('stage.score', logged<{ full?: boolean }>('stage.score', (d) => runScoring({ full: d?.full })));
 await boss.work<{ id?: number }>('segments.refresh', logged<{ id?: number }>('segments.refresh', (d) => refreshSegments(d?.id)));
+// Exports: one file at a time per worker (large files are written in batches, see stages/export/build.ts).
+await boss.work<{ id: number }>('exports.build', { localConcurrency: 1 }, logged<{ id: number }>('exports.build', (d) => buildExport(d.id)));
+await boss.work('exports.daily', logged('exports.daily', () => dailyExports()));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
 await boss.work('system.funnel', logged('system.funnel', () => funnel()));
 await boss.work('system.source-health', logged('system.source-health', () => sourceHealth()));
@@ -136,6 +142,7 @@ await boss.schedule('stage.plan', '* * * * *');
 await boss.schedule('system.cleanup', '37 2 * * *');
 await boss.schedule('stage.score', '7,22,37,52 * * * *');
 await boss.schedule('segments.refresh', '17 3 * * *');
+await boss.schedule('exports.daily', '13 5 * * *');
 await boss.schedule('system.funnel', '43 * * * *');
 await boss.schedule('system.source-health', '29 * * * *');
 

@@ -62,6 +62,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `DNS_MODE` | Empty = use the dashboard setting (`udp`, fastest). `doh` = DNS over HTTPS, only if your network blocks normal DNS | empty |
 | `CHROME_PATH` | Chrome/Chromium for Lighthouse. The Docker worker already has Chromium; set this only when running the worker outside Docker | empty |
 | `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | Dashboard login. **Required**: without a password the dashboard shows a message and nothing else | `admin` / empty |
+| `EXPORT_DIR` | Where export files are written (Docker: `data/exports` on your machine) | `data/exports` |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
 
@@ -79,6 +80,7 @@ table and will be editable from the dashboard (Settings page, Phase 9).
 | See job queues | `docker compose exec worker pnpm --filter @lead/worker jobs list` |
 | Run a job now | `docker compose exec worker pnpm --filter @lead/worker jobs run system.lake-selftest '{"rows":1000000}'` |
 | Run more workers (more speed) | `docker compose up -d --scale worker=3` |
+| Make an export from the command line | `docker compose exec worker pnpm --filter @lead/worker jobs export brand_1 xlsx new AB` |
 | Recount the dashboard funnel now | `docker compose exec worker pnpm --filter @lead/worker jobs funnel` |
 | Rescore every lead now (after editing brands) | `docker compose exec worker pnpm --filter @lead/worker jobs score full` |
 | Refresh saved segments now | `docker compose exec worker pnpm --filter @lead/worker jobs segments` |
@@ -250,7 +252,7 @@ so it stays fast with millions of rows in the data lake.
 | **Brands** | Edit the 5 brands without code: profile and services, platforms and countries, niche weights, problem → service map, scoring weights and tier cut-offs, first-line templates (checked before saving). Shared templates on the Brands page. **Rescore now** |
 | **Niches** | Lead counts per niche, saturation, on/off, excluded; per sub-niche: add/remove keywords (positive or negative) and URL patterns. **Re-classify all** runs every fetched site through the current rules again (in the background) |
 | **Sources** | Turn sources on/off, change their schedule, **Run now**, health, last runs with speed and drop reasons |
-| **Exports** | Built in Phase 10 (CSV / Excel) |
+| **Exports** | Create CSV / Excel files per brand → segment → tier, download them, see the history (details below) |
 | **Settings** | Do-not-contact list (add, CSV import, search, remove); every engine setting (crawl speed, rate limits, batch sizes, audit and scoring rules) with checks; fingerprint version; failed jobs |
 | **System** | Database, worker and disk status; queues; recent runs |
 
@@ -261,6 +263,30 @@ so it stays fast with millions of rows in the data lake.
 4. Reload the dashboard: the browser asks for user `admin` and your password.
 
 Never put the dashboard on the internet without the password; it can change brands and the do-not-contact list.
+
+---
+
+## Exports (Phase 10)
+
+**Dashboard → Exports**: pick a brand, optionally one of its segments, the tiers, "new since last export" or "all", only leads
+with an email (on by default), and CSV or Excel. The worker writes the file in the background; the page refreshes until the
+**Download** button appears. Files are kept 30 days (`exports.keep_days`); the history stays.
+
+| | |
+|---|---|
+| **Excel (.xlsx)** | A **Summary** sheet (what is in the file, how many leads matched, how many the do-not-contact list removed) and one sheet per niche (or one sheet). Headers frozen, columns sized. Up to ~1M rows per sheet |
+| **CSV** | One file of any size, UTF-8 with the marker Excel needs for accents and symbols |
+| **New since last export** | Leads never exported for this brand before. Each lead is marked only after its file is completely written, so a failed export never "uses up" leads. "Forget exported" on the Exports page starts over |
+| **Do-not-contact list** | Applied in the same step that picks the leads, i.e. right before writing |
+| **Daily exports** | Setting `exports.daily`, e.g. `[{"brand": "brand_1", "tiers": ["A","B"], "format": "xlsx"}]` — written every day at 05:13 UTC, new leads only |
+
+**Columns:** lead_id, brand, segment, tier, score, niche, sub_niche, domain, website, company_name, platform, key_technologies,
+country, state, city, email, email_type, phone, owner_name, owner_title, socials, product_count, price_range,
+lighthouse_performance, finding_1–3 (problems this brand solves first), services_to_pitch, first_line_1–3, first_seen_date, sources.
+
+**Safe to open:** text from websites can never run as a formula in Excel or Google Sheets (cells starting with `=`, `+`, `-`, `@`
+get an apostrophe in CSV; Excel files store everything as plain text). Phone numbers are written with spaces
+(`+1 804 316 9068`) so spreadsheets keep the `+`.
 
 ---
 

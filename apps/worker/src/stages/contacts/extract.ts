@@ -126,8 +126,9 @@ export function extractContacts(
     } catch {
       /* keep as is */
     }
-    e = e.split('?')[0]!.trim().replace(/[.,;:)\]]+$/, '').toLowerCase();
-    if (/^[^@\s]+@[^@\s]+\.[a-z]{2,24}$/i.test(e) && !isJunkEmail(e)) out.emails.push({ value: e, source: pageUrl, via });
+    // "mailto://info@…", "<br>sales@…", "#info@…": drop anything before the first letter/digit of the address.
+    e = e.split('?')[0]!.replace(/<[^>]*>/g, '').trim().replace(/[.,;:)\]]+$/, '').replace(/^[^a-z0-9]+/i, '').toLowerCase();
+    if (/^[a-z0-9][^@\s]*@[^@\s]+\.[a-z]{2,24}$/i.test(e) && !isJunkEmail(e)) out.emails.push({ value: e, source: pageUrl, via });
   };
   const addPhone = (raw: string, via: string) => {
     const p = parsePhoneNumberFromString(raw.replace(/^tel:/i, '').replace(/%20/g, ' '), opts.defaultCountry);

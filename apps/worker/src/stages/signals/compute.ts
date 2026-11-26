@@ -91,8 +91,8 @@ export function computeSignals(x: SignalInput) {
   return {
     country,
     country_source: source,
-    region: (fromAddress ? x.address?.region : null) ?? (source === 'store' ? x.store_province : null) ?? null,
-    city: (fromAddress ? x.address?.city : null) ?? (source === 'store' ? x.store_city : null) ?? null,
+    region: cleanPlace((fromAddress ? x.address?.region : null) ?? (source === 'store' ? x.store_province : null)),
+    city: cleanPlace((fromAddress ? x.address?.city : null) ?? (source === 'store' ? x.store_city : null)),
     address: fromAddress ? [x.address?.street, x.address?.city, x.address?.region, x.address?.postal].filter(Boolean).join(', ') || null : null,
     size_signals: {
       tranco_rank: x.tranco_rank,
@@ -150,4 +150,16 @@ export function cleanCompanyName(raw: string | null | undefined, domain: string)
   const name = match ?? parts[0]!;
   if (!/\p{L}/u.test(name) || name.length > 60) return null;
   return name;
+}
+
+/**
+ * A city or region name, or null. Websites put street numbers, VAT numbers or whole addresses in their
+ * structured "locality" fields ("25 Old Broad St", "1A", "VAT Number GB …"). "Dublin 12", "Praha 1", "Washington, DC" stay.
+ */
+export function cleanPlace(v: string | null | undefined): string | null {
+  const s = (v ?? '').replace(/\s+/g, ' ').trim();
+  // A leading number is a street address or a postcode ("25 Old Broad St", "2060"), except ordinals ("10th of Ramadan City").
+  const leadingNumber = /^\d/.test(s) && !/^\d+(st|nd|rd|th)\b/i.test(s);
+  if (!s || s.length > 40 || leadingNumber || s.includes('@') || /\b(vat|tax|number|phone|e-?mail|fax|www)\b/i.test(s)) return null;
+  return s;
 }

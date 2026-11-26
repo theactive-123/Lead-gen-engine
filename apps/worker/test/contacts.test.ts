@@ -95,3 +95,13 @@ describe('person names (cases seen in the first real batch)', () => {
     expect(extractContacts(html, 'https://x.com/about').people.map((p) => p.value.name)).toEqual(['Jane Smith']);
   });
 });
+
+describe('emails with junk in front (seen in exports, 2026-11-26)', () => {
+  it('mailto://, <br>, # and : before the address are dropped', () => {
+    const html = `<body><a href="mailto://info@actaero.com">a</a><a href="mailto:%3Cbr%3Ecustomercare@admirejewelry.com">b</a>
+      <a href="mailto:#info@airandfire.com">c</a><a href="mailto::reservations@3monkiescr.com">d</a></body>`;
+    const emails = extractContacts(html, 'https://x.com/').emails.map((e) => e.value);
+    expect(emails).toEqual(expect.arrayContaining(['info@actaero.com', 'customercare@admirejewelry.com', 'info@airandfire.com', 'reservations@3monkiescr.com']));
+    expect(emails.every((e) => /^[a-z0-9]/.test(e))).toBe(true);
+  });
+});

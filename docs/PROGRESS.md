@@ -217,6 +217,30 @@ Settings, System. Migration 020.
 - Screenshots in `docs/screenshots/phase9-*.png` (pages without contact data; explorer/lead screenshots are not committed because they
   show real business emails).
 
+## Phase 10 — Exports (done 2026-11-26)
+Worker job `exports.build` (one export at a time per worker) + daily `exports.daily`; dashboard Exports page + download route.
+Migration 021 (`exports` history, `exported_leads` per brand). exceljs 4.4.0 (MIT), streaming writer.
+
+**Measured** (this sandbox, warm database): 19,125 rows → CSV 4.4 s (14.6 MB), Excel 5.3 s (5.3 MB, 4 niche sheets + summary);
+≈ 4,000 rows/s, so 100k rows ≈ 25–30 s. Memory stays flat (rows are fetched 2,000 at a time and streamed to disk).
+
+**Verified**
+- Files read back with Python csv / openpyxl and **opened in LibreOffice** (headless convert both ways): 33 columns on every row,
+  BOM present, accents/™/® intact, no formula cells.
+- Browser test of the whole flow: create (xlsx, new, A/B) → done → download; a second "new" export = 0 leads; a domain on the
+  do-not-contact list is reported as removed (1) and is not in the file; a segment of another brand is refused; unknown export /
+  path tricks → 404. Failure path: 3 exports that crashed left no file and marked no leads.
+
+**Bugs found & fixed in this phase**
+- Phones: spreadsheets turned "+18043169068" into the number 18043169068 → written as "+1 804 316 9068" (stays text).
+- Emails with junk in front from mailto links ("//info@", "<br>customercare@", "#info@", ":reservations@"): 22 fixed, extraction strips it.
+- City/region: street numbers, numeric region codes, a VAT number in structured data → `cleanPlace()` (keeps "Dublin 12",
+  "Washington, DC", "Tel Aviv-Yafo", "10th of Ramadan City"); 20 bad values removed after review of every dropped value.
+- Next.js build traced the whole project (incl. `data/exports`) into the server bundle because the download path is only known
+  at run time → `turbopackIgnore` on that path; bundle 96 → 64 MB, warning gone. (Docker builds were not affected: `data` is in .dockerignore.)
+- Excel streaming: a row cannot be styled after commit (first export crashed) → styled before commit.
+- Test exports, marks and the test do-not-contact entry were removed afterwards, so the first real export starts clean.
+
 **Known limits / next**
 - One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,
   which then retries. Phase 11: limit concurrent heavy DuckDB jobs.

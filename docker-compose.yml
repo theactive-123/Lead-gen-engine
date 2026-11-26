@@ -25,6 +25,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-lead}:${POSTGRES_PASSWORD:-lead}@postgres:5432/${POSTGRES_DB:-lead}
       LAKE_DIR: /data/lake
+      EXPORT_DIR: /data/exports
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CRAWLER_CONTACT_EMAIL: ${CRAWLER_CONTACT_EMAIL:-crawler-contact@example.invalid}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
@@ -43,6 +44,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-lead}:${POSTGRES_PASSWORD:-lead}@postgres:5432/${POSTGRES_DB:-lead}
       DASHBOARD_USER: ${DASHBOARD_USER:-admin}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      EXPORT_DIR: /data/exports
+    volumes:
+      - ./data/exports:/data/exports:ro   # the dashboard only downloads finished exports
     ports:
       - "${WEB_PORT:-3000}:3000"
 

@@ -16,6 +16,8 @@ const schema = z.object({
   /** Most disk DuckDB may use to spill big queries (fails the query instead of filling the disk). */
   DUCKDB_MAX_TEMP: z.string().default('4GB'),
   CHROME_PATH: z.string().optional(), // Chrome/Chromium binary for Lighthouse (the worker image sets it)
+  /** Where export files (CSV / Excel) are written; default: next to the data lake (data/exports). */
+  EXPORT_DIR: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

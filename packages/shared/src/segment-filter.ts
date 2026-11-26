@@ -11,6 +11,10 @@ import { z } from 'zod';
  * Suppressed domains and emails are always left out.
  */
 const list = z.array(z.string().min(1)).min(1);
+/** True when the lead's domain or email is on the do-not-contact list (aliases d = domains, ct = contacts). */
+export const SUPPRESSED = `EXISTS (SELECT 1 FROM suppression x WHERE (x.kind = 'domain' AND x.value = d.domain) OR (x.kind = 'email' AND x.value = lower(ct.email)))`;
+const SUPPRESSION_CHECK = `NOT ${SUPPRESSED}`;
+
 export const SegmentFilter = z.object({
   tiers: z.array(z.enum(['A', 'B', 'C'])).min(1).optional(),
   min_score: z.number().min(0).max(100).optional(),
@@ -42,15 +46,16 @@ export type SegmentFilter = z.infer<typeof SegmentFilter>;
  * Aliases: m brand_matches, d domains, k classifications, n niches, s sub_niches, c companies, ct contacts,
  * sp store_profiles, a audits. Callers choose the columns, order and paging.
  */
-export function segmentWhere(brandId: number, raw: unknown): { from: string; where: string; params: unknown[] } {
+export function segmentWhere(brandId: number, raw: unknown, opts: { includeSuppressed?: boolean } = {}): { from: string; where: string; params: unknown[] } {
   const f = SegmentFilter.parse(raw ?? {});
   const params: unknown[] = [brandId];
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const w: string[] = [
     'm.brand_id = $1',
     "m.tier <> 'X'",
-    `NOT EXISTS (SELECT 1 FROM suppression x WHERE (x.kind = 'domain' AND x.value = d.domain) OR (x.kind = 'email' AND x.value = lower(ct.email)))`,
   ];
+  // Only exports use includeSuppressed, to count how many leads the do-not-contact list removed.
+  if (!opts.includeSuppressed) w.push(SUPPRESSION_CHECK);
   if (f.tiers) w.push(`m.tier = ANY(${p(f.tiers)}::text[])`);
   if (f.min_score != null) w.push(`m.match_score >= ${p(f.min_score)}`);
   if (f.niches) w.push(`n.key = ANY(${p(f.niches)}::text[])`);

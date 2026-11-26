@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanCompanyName, computeSignals, decodeEntities, normaliseCountry, type SignalInput } from '../src/stages/signals/compute.js';
+import { cleanCompanyName, cleanPlace, computeSignals, decodeEntities, normaliseCountry, type SignalInput } from '../src/stages/signals/compute.js';
 
 const base = (o: Partial<SignalInput>): SignalInput => ({
   domain: 'shop.com', techs: [], tranco_rank: null, cc_pages: null, sitemap_count: null, sitemap_kind: null, product_count: null,
@@ -60,5 +60,14 @@ describe('company name cleaning (real names from the 2026-11-25 run)', () => {
     expect(cleanCompanyName('#1 Pet Store', '1petstore.com')).toBe('#1 Pet Store');
     expect(cleanCompanyName('industrial panel pc,rugged mini PC,fanless box computer,Monitor manufacturers', 'x.com')).toBeNull();
     expect(cleanCompanyName('Coca-Cola Store', 'cocacola.com')).toBe('Coca-Cola Store');
+  });
+});
+
+describe('city / region cleaning (real values from structured data, 2026-11-26)', () => {
+  it('keeps real places, including ones with a district number', () => {
+    for (const v of ['London', 'Dublin 12', 'Praha 1', 'First 6th of October', 'São Paulo', 'Washington, DC', 'Tel Aviv-Yafo', '10th of Ramadan City']) expect(cleanPlace(v)).toBe(v);
+  });
+  it('drops street numbers, VAT numbers and whole addresses', () => {
+    for (const v of ['25 Old Broad St', '1A', 'VAT Number GB 363 7263 85', 'sales@x.com', '2060', '01', '', null]) expect(cleanPlace(v)).toBeNull();
   });
 });
