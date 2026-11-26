@@ -145,6 +145,42 @@ pipeline idle; trial batches ran at ~40k/hour). Avg 3.6 findings per lead, media
   `packages/fingerprints/overrides.json` (kept by update.sh), false rows deleted.
 - 30-minute full-pipeline run after the fixes: 0 errors, every stage moved data.
 
+## Phase 8 — Brands, scoring, segments, first lines (done 2026-11-26)
+5 placeholder brands (Shopify, Webflow, WordPress, white-label dev, design) until the real profiles arrive. Migration 019.
+
+**Scoring** — `score = 100 × fit × need × reach × fresh^0.5`, per lead × brand; breakdown stored. Chosen over a weighted
+average because an average let a WordPress site reach tier B for the Shopify brand. Tiers A ≥ 35, B ≥ 20 (first try 60/40
+gave almost no A/B: four parts below 1 multiply to small numbers). Full rescore of 24,484 leads × 5 brands: 19 s
+(~88k leads/min). Incremental: only leads whose inputs changed (tested: 1 changed → 1 rescored); a brand/template/settings
+change (config hash) triggers a full rescore automatically.
+
+| Brand (placeholder) | A | B | C | X (not a fit) | A/B with a first line |
+|---|---|---|---|---|---|
+| 1 Shopify | 1,382 | 2,604 | 12,093 | 8,405 | 100% |
+| 2 Webflow | 99 | 319 | 20,082 | 3,984 | 100% |
+| 3 WordPress | 417 | 1,767 | 21,462 | 838 | 100% |
+| 4 White-label dev | 81 | 665 | 2,742 | 20,996 | 94% |
+| 5 Design | 0 | 69 | 20,644 | 3,771 | 67% |
+
+Brand 5 has no A because its placeholder problem map holds mostly rare/low findings — the real profile decides this.
+Top needs among A/B: Klaviyo setup 3,592 and reviews app 2,339 (brand 1); image optimisation 1,796 and speed 1,599 (brand 3);
+migration to Webflow 393 (brand 2).
+
+**First lines** — 96,794 lines for 49,009 lead × brand pairs; max 22 words, 0 with "!". Verified against the live sites:
+14/14 quoted facts true (WordPress 5.4.14 / 5.6 / 5.7.22, jQuery 3.1.1 / 1.10.2, © 2022 / 2024, Wix ×2, Squarespace ×3).
+Three templates softened before the run (claims we cannot measure, e.g. "no follow-up emails" — Shopify Email is invisible in HTML).
+
+**Segments** — 6 example segments, refreshed in 2 s. Spec example "Shopify DTC, US, 50–500 products, Meta Pixel, no Klaviyo,
+Lighthouse < 50" = 5 leads (only 136 have Lighthouse so far); all 5 re-checked condition by condition. Independent count for
+"Shopify, no email tool, English-speaking, A/B" = 2,439 = segment. Suppression test: 5 → 4 → 5.
+
+**Bugs found & fixed in this phase**
+- Broken links: Cloudflare's hidden-email link `/cdn-cgi/l/email-protection` is 404 when fetched but a mailto link in a browser
+  → 242 of 862 "broken links" findings were false (28%). Sampling skips `/cdn-cgi/`; findings corrected. Recheck of 10 remaining:
+  9 real 404s, 1 behind an anti-bot page (uncertain).
+- Company names: HTML entities (`&amp;`, `&#039;`), title taglines, theme placeholders (`#site_title`), names without letters.
+  `cleanCompanyName()` (keeps the title part matching the domain); 2,042 names cleaned, 290 dropped (export falls back to domain).
+
 **Known limits / next**
 - One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,
   which then retries. Phase 11: limit concurrent heavy DuckDB jobs.

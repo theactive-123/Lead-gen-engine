@@ -3,7 +3,7 @@ import { datasetExists, datasetGlob, db, lakeQuery, setting, sqlLiteral, withRun
 import { REGISTRY_FILE } from '../normalize.js';
 import { HostLimiter } from '../fetch/client.js';
 import { loadBatch, type StagePlan } from '../plan.js';
-import { computeSignals } from './compute.js';
+import { cleanCompanyName, computeSignals } from './compute.js';
 import { registrationDate } from './rdap.js';
 
 /** Stage 8 — business signals into Postgres `companies` (runs after contacts). */
@@ -63,7 +63,7 @@ export async function runSignalsBatch(snapshot: string, batch: number): Promise<
           newest_product_created: iso(r.newest_created), address: r.address ? JSON.parse(r.address) : null, store_country: r.store_country,
           store_province: r.store_province, store_city: r.store_city, phone: r.phone, currency: r.currency,
         });
-        const name = r.org_name ?? r.shop_name ?? r.site_name ?? (r.title ? String(r.title).split(/\s[|–—-]\s/)[0]!.slice(0, 120) : null);
+        const name = [r.org_name, r.shop_name, r.site_name, r.title].map((n) => cleanCompanyName(n, r.domain)).find(Boolean) ?? null;
         out.push({ domain: r.domain, computed_at: new Date().toISOString(), name, platform: r.platform, ...s,
           size_signals: JSON.stringify(s.size_signals), freshness: JSON.stringify(s.freshness), marketing: JSON.stringify(s.marketing) });
       }

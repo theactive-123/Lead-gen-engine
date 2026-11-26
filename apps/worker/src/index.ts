@@ -1,4 +1,4 @@
-import { QUEUES, closeDb, db, ensureQueue, env, logger, migrate, queue, stopQueue } from '@lead/shared';
+import { QUEUES, closeDb, db, ensureQueue, env, logger, migrate, queue, refreshSegments, stopQueue } from '@lead/shared';
 import { SOURCES } from './sources/index.js';
 import { runSource } from './sources/runner.js';
 import { cleanup } from './stages/cleanup.js';
@@ -13,6 +13,7 @@ import { contactsPlan, runContactsBatch } from './stages/contacts/stage.js';
 import { runSignalsBatch, signalsPlan } from './stages/signals/stage.js';
 import { auditPlan, runAuditBatch } from './stages/audit/stage.js';
 import { lighthousePlan, runLighthouseBatch } from './stages/lighthouse/stage.js';
+import { runScoring } from './stages/score/stage.js';
 import { beat, diskUsage, heartbeat, lakeSelftest } from './jobs/system.js';
 
 /**
@@ -72,6 +73,8 @@ await ensureQueue(boss, 'stage.contacts', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.signals', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.audit', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.lighthouse', { expireInSeconds: 3600 });
+await ensureQueue(boss, 'stage.score', { exclusive: true, expireInSeconds: 3600 });
+await ensureQueue(boss, 'segments.refresh', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
 // Each stage is planned on its own: one failing stage (logged with its name) must not block the others.
@@ -99,10 +102,15 @@ await boss.work<Batch>('stage.signals', { localConcurrency: 1 }, logged<Batch>('
 await boss.work<Batch>('stage.audit', { localConcurrency: 2 }, logged<Batch>('stage.audit', (d) => runAuditBatch(d.snapshot, d.batch)));
 // One Lighthouse batch at a time per worker: the batch itself runs `lighthouse.parallel` Chrome instances.
 await boss.work<Batch>('stage.lighthouse', { localConcurrency: 1 }, logged<Batch>('stage.lighthouse', (d) => runLighthouseBatch(d.snapshot, d.batch)));
+// Scoring: brand matches + first lines for leads whose data changed (everything when the brand setup changed).
+await boss.work<{ full?: boolean }>('stage.score', logged<{ full?: boolean }>('stage.score', (d) => runScoring({ full: d?.full })));
+await boss.work<{ id?: number }>('segments.refresh', logged<{ id?: number }>('segments.refresh', (d) => refreshSegments(d?.id)));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
 await boss.schedule('stage.normalize', '*/15 * * * *');
 await boss.schedule('stage.plan', '* * * * *');
 await boss.schedule('system.cleanup', '37 2 * * *');
+await boss.schedule('stage.score', '7,22,37,52 * * * *');
+await boss.schedule('segments.refresh', '17 3 * * *');
 
 // Recurring jobs (cron, UTC). pg-boss makes sure only one worker runs each tick.
 await boss.schedule(QUEUES.heartbeat, '* * * * *');

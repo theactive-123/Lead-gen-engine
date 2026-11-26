@@ -63,6 +63,8 @@ export function sampleLinks(links: string[], finalUrl: string, n: number): strin
       if (!/^https?:$/.test(u.protocol) || !sameSite(finalUrl, u.href)) continue;
       if (/\.(pdf|jpe?g|png|gif|webp|svg|zip|mp4|mp3|docx?|xlsx?)$/i.test(u.pathname)) continue;
       if (/\/(cart|checkout|account|login|wp-admin|wp-login|logout|search)(\/|$|\?)/i.test(u.pathname)) continue;
+      // Cloudflare system paths: /cdn-cgi/l/email-protection is a hidden email link a browser decodes; fetched directly it is 404.
+      if (u.pathname.startsWith('/cdn-cgi/')) continue;
       const key = `${u.origin}${u.pathname}`;
       if (seen.has(key)) continue;
       seen.add(key);

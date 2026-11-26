@@ -76,6 +76,9 @@ table and will be editable from the dashboard (Settings page, Phase 9).
 | See job queues | `docker compose exec worker pnpm --filter @lead/worker jobs list` |
 | Run a job now | `docker compose exec worker pnpm --filter @lead/worker jobs run system.lake-selftest '{"rows":1000000}'` |
 | Run more workers (more speed) | `docker compose up -d --scale worker=3` |
+| Rescore every lead now (after editing brands) | `docker compose exec worker pnpm --filter @lead/worker jobs score full` |
+| Refresh saved segments now | `docker compose exec worker pnpm --filter @lead/worker jobs segments` |
+| Count a filter without saving it | `docker compose exec worker pnpm --filter @lead/worker jobs count brand_1 '{"platforms":["Shopify"],"tiers":["A","B"]}'` |
 
 ---
 
@@ -184,6 +187,48 @@ tag manager). Those are saved as technologies with source `runtime`, and a light
 - The light audit reads the HTML the server sends. A heading or form added later by JavaScript can be missed
   (seen on 1 of 20 checked "no H1" sites). Lighthouse runs a real browser, so top-tier leads are checked properly.
 - Each Lighthouse run is its own process with its own Chrome: Lighthouse cannot run twice in one process.
+
+---
+
+## Brands, scoring and first lines (Phase 8)
+
+Every in-niche lead is scored for **each of your 5 brands** every 15 minutes (only leads whose data changed;
+everything when you change a brand). The 5 brands are **placeholders** (Shopify, Webflow, WordPress, white-label
+development, design) until you fill in the real profiles.
+
+**What a brand profile holds** (tables `brands`, `brand_niche_weights`, `brand_problem_map`, `brand_templates`):
+services, price range, target niches / sub-niches (weight 0–1; 0 = excluded), platforms (weight per platform),
+countries (target / excluded), catalog size, which audit findings the brand can fix and the service it sells for each,
+first-line templates, scoring weights and tier cut-offs.
+
+**The score** — four parts, each 0 to 1, multiplied:
+
+| Part | Asks | Comes from |
+|---|---|---|
+| Fit | Is this the brand's kind of customer? | niche weight × platform weight × country × catalog size × niche confidence |
+| Need | Does the site have problems this brand fixes? | findings in the brand's problem map (weight × severity) |
+| Reach | Can we contact them? | email type (named > role > freemail), phone only, plus completeness |
+| Freshness | Is the business active? | recent product, current copyright year, young domain; old copyright lowers it |
+
+`score = 100 × fit × need × reach × freshness^0.5` (the powers are the brand's editable weights). Multiplying means
+one weak part pulls the score down: a niche the brand does not serve scores 0 (tier **X**, not a fit).
+Tiers: **A ≥ 35**, **B ≥ 20**, else **C** — an A lead is roughly fit 0.8, one clear problem, a usable email and recent
+activity. Every match stores its **breakdown** (each part, the matched problems and services), so you can see why.
+
+**First lines** — up to 3 per lead and brand, from templates (no AI, no key). Each one quotes one real finding with
+its measured value ("scores 29/100 for mobile speed", "the footer still says © 2022", "runs WordPress 5.4.14").
+A template whose value is missing is skipped — lines are never filled with guesses. Every line is checked against
+`first_lines.rules`: at most 25 words, no "!", no banned phrases ("I hope this finds you well", "game-changer"…).
+Placeholders: `{domain}`, `{company}`, `{score}`, `{lcp_s}`, `{tbt_s}`, `{ttfb_s}`, `{cls}`, `{year}`, `{version}`,
+`{scripts}`, `{count}`, `{broken_path}`, `{platform}`, `{product_count}`. A template with code `niche:<sub-niche>`
+talks about the lead's business instead (used by the white-label brand, which sets `lead_with_niche`).
+
+**Segments** (table `segments`) are saved filters per brand, e.g. *Shopify DTC, US, 50–500 products, Meta Pixel,
+no Klaviyo, Lighthouse < 50*. Filter keys: `tiers`, `min_score`, `niches`, `sub_niches`, `platforms`, `tech_has`,
+`tech_any`, `tech_not`, `countries`, `exclude_countries`, `product_count_min/max`, `price_median_min/max`,
+`lighthouse_perf_max`, `completeness_min`, `has_email`, `email_types`, `findings_has`, `findings_any`, `findings_not`,
+`first_seen_after`. Members are refreshed daily (03:17 UTC) and keep the date they joined. Anything in the
+`suppression` table (domain or email) is never in a segment, and is checked again before every export.
 
 ---
 

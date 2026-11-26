@@ -71,6 +71,10 @@ describe('light audit: helpers', () => {
     const s = sampleLinks(links, 'https://a.com/', 3);
     expect(s).toEqual(['https://a.com/p0', 'https://a.com/p10', 'https://a.com/p20']);
   });
+  it("skips Cloudflare's hidden-email links (404 when fetched, a mailto link in a browser; seen on 242 sites)", () => {
+    expect(sampleLinks(['https://aicyberwatch.com/cdn-cgi/l/email-protection', 'https://aicyberwatch.com/about'], 'https://aicyberwatch.com/', 3))
+      .toEqual(['https://aicyberwatch.com/about']);
+  });
 });
 
 describe('light audit on real homepages (fixtures 2026-11-24)', () => {

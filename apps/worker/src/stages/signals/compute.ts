@@ -117,3 +117,37 @@ export function computeSignals(x: SignalInput) {
     currency: x.currency,
   };
 }
+
+const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', rsquo: '’', lsquo: '‘', bull: '•', hellip: '…' };
+
+/** Decode the HTML entities that turn up in page titles and shop names (&amp; &#039; &#8217; …). */
+export function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+    }
+    return NAMED[e.toLowerCase()] ?? m;
+  });
+}
+
+const letters = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '');
+
+/**
+ * A company name fit for an export column, or null (the export then shows the domain).
+ * Titles often carry a tagline ("Men's Suits | Shirts | 6E Design"): keep the part that matches the domain,
+ * else the first part. Names with no letters ("1550", "-") or longer than 60 characters are dropped.
+ */
+export function cleanCompanyName(raw: string | null | undefined, domain: string): string | null {
+  if (!raw) return null;
+  const label = letters(domain.split('.')[0] ?? '');
+  const s = decodeEntities(raw).replace(/\s+/g, ' ').trim();
+  // Unfilled theme placeholders (#site_title, {{ shop.name }}, %%sitename%%) are not names.
+  if (/^#[a-z_]+$/i.test(s) || /\{\{|\}\}|%%/.test(s)) return null;
+  const parts = s.split(/\s+[|–—•:-]\s+|\s*[|_]\s*/).map((p) => p.trim().replace(/^[\s\-–—|:•]+|[\s\-–—|:•!]+$/g, '')).filter(Boolean);
+  if (!parts.length) return null;
+  const match = parts.find((p) => { const l = letters(p); return l.length >= 3 && (label.includes(l) || l.includes(label)); });
+  const name = match ?? parts[0]!;
+  if (!/\p{L}/u.test(name) || name.length > 60) return null;
+  return name;
+}
