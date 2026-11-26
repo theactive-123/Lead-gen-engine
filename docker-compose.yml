@@ -41,6 +41,8 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-lead}:${POSTGRES_PASSWORD:-lead}@postgres:5432/${POSTGRES_DB:-lead}
+      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
 

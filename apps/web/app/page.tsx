@@ -1,149 +1,181 @@
+import Link from 'next/link';
 import { q } from '@/lib/db';
+import { ago, fmt, pct } from '@/lib/format';
+import { Bar, Card, Dot, Notice, PageHeader, Stat, Table, cx } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
-type Run = { id: string; stage: string; status: string; started_at: Date; in_count: string; out_count: string; per_minute: number; seconds: number | null };
-type QueueRow = { name: string; state: string; n: string };
-type Metric = { value: Record<string, any>; measured_at: Date };
-type Worker = { id: string; last_beat: Date; info: { rss_mb: number; uptime_s: number } };
+type Funnel = { source: string; candidates: number; kept: number; dns_checked: number; resolved: number; fetched: number; in_niche: number; with_contact: number; qualified: number };
+const STEPS: [keyof Funnel, string, string][] = [
+  ['candidates', 'Candidates', 'New domains from all sources'],
+  ['kept', 'Kept', 'Not junk (TLD / random-name rules)'],
+  ['resolved', 'Resolved', 'DNS works, not parked'],
+  ['fetched', 'Fetched', 'Homepage loaded and usable'],
+  ['in_niche', 'In niche', 'Matches one of your niches'],
+  ['with_contact', 'With email', 'In niche and an email was found'],
+  ['qualified', 'Qualified', 'Tier A or B for at least one brand'],
+];
+const WINDOWS = [[1, 'Today'], [7, '7 days'], [30, '30 days']] as const;
 
-function fmt(n: number | string) {
-  return Number(n).toLocaleString('en-US');
-}
-function ago(d: Date) {
-  const s = Math.round((Date.now() - new Date(d).getTime()) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  return `${Math.round(s / 3600)}h ago`;
-}
+export default async function Overview({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+  const sp = await searchParams;
+  const days = [1, 7, 30].includes(Number(sp.days)) ? Number(sp.days) : 30;
+  const since = `current_date - ${days - 1}`;
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-5">
-      <h2 className="mb-3 text-sm font-medium text-neutral-500">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Status({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span className={`inline-flex items-center gap-2 text-sm ${ok ? 'text-emerald-700' : 'text-red-700'}`}>
-      <span className={`h-2 w-2 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
-      {label}
-    </span>
-  );
-}
-
-export default async function SystemPage() {
-  let dbOk = true;
-  let runs: Run[] = [];
-  let queues: QueueRow[] = [];
-  let workers: Worker[] = [];
-  let disk: Metric | undefined;
-  try {
-    runs = await q<Run>(
-      `SELECT id, stage, status, started_at, in_count, out_count, per_minute,
-              extract(epoch FROM (coalesce(finished_at, now()) - started_at))::float AS seconds
-       FROM runs ORDER BY started_at DESC LIMIT 20`,
-    );
-    queues = await q<QueueRow>(
-      `SELECT name, state::text AS state, count(*)::text AS n FROM pgboss.job
-       WHERE name NOT LIKE '\\_\\_%' GROUP BY 1, 2 ORDER BY 1`,
-    );
-    workers = await q<Worker>(`SELECT id, last_beat, info FROM workers WHERE last_beat > now() - interval '2 minutes' ORDER BY id`);
-    [disk] = await q<Metric>(`SELECT value, measured_at FROM system_metrics WHERE metric='disk' ORDER BY id DESC LIMIT 1`);
-  } catch {
-    dbOk = false;
-  }
-
-  const workerOk = workers.length > 0;
-  const byQueue = new Map<string, Record<string, number>>();
-  for (const r of queues) {
-    const m = byQueue.get(r.name) ?? {};
-    m[r.state] = Number(r.n);
-    byQueue.set(r.name, m);
-  }
+  const [bySource, updated, niches, brands, throughput, queues, health, sourceRuns] = await Promise.all([
+    q<Funnel>(`SELECT source, sum(candidates)::int candidates, sum(kept)::int kept, sum(dns_checked)::int dns_checked, sum(resolved)::int resolved,
+                 sum(fetched)::int fetched, sum(in_niche)::int in_niche, sum(with_contact)::int with_contact, sum(qualified)::int qualified
+               FROM funnel_daily WHERE day >= ${since} GROUP BY source ORDER BY (source = 'all') DESC, sum(candidates) DESC`),
+    q<{ at: Date | null }>(`SELECT max(updated_at) AS at FROM funnel_daily`),
+    q<{ name: string; key: string; n: number; with_email: number; qualified: number }>(`
+      SELECT n.name, n.key, count(*)::int n, count(ct.email)::int with_email,
+        count(*) FILTER (WHERE EXISTS (SELECT 1 FROM brand_matches m WHERE m.domain_id = d.id AND m.tier IN ('A','B')))::int qualified
+      FROM classifications k JOIN niches n ON n.id = k.niche_id JOIN domains d ON d.id = k.domain_id LEFT JOIN contacts ct ON ct.domain_id = d.id
+      WHERE d.first_seen >= ${since} GROUP BY 1, 2 ORDER BY 3 DESC`),
+    q<{ id: number; name: string; a: number; b: number; c: number }>(`
+      SELECT b.id, b.name, count(*) FILTER (WHERE m.tier = 'A')::int a, count(*) FILTER (WHERE m.tier = 'B')::int b, count(*) FILTER (WHERE m.tier = 'C')::int c
+      FROM brands b LEFT JOIN brand_matches m ON m.brand_id = b.id AND m.domain_id IN (SELECT id FROM domains WHERE first_seen >= ${since})
+      WHERE b.enabled GROUP BY 1, 2 ORDER BY 1`),
+    q<{ stage: string; runs: number; records: number; ok_records: number; minutes: number | null; failed: number; last: Date }>(`
+      SELECT stage, count(*)::int runs, sum(in_count)::int records,
+        -- speed only from runs that finished normally (a run cut off by a restart has no real duration)
+        sum(in_count) FILTER (WHERE status = 'ok')::int ok_records,
+        round(sum(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'ok') / 60.0, 2)::float minutes,
+        count(*) FILTER (WHERE status = 'failed')::int failed, max(started_at) last
+      FROM runs WHERE started_at > now() - interval '24 hours' GROUP BY 1 ORDER BY 1`),
+    q<{ name: string; waiting: number; active: number; retry: number; failed: number }>(`
+      SELECT name, count(*) FILTER (WHERE state = 'created')::int waiting, count(*) FILTER (WHERE state = 'active')::int active,
+        count(*) FILTER (WHERE state = 'retry')::int retry, count(*) FILTER (WHERE state = 'failed' AND completed_on > now() - interval '24 hours')::int failed
+      FROM pgboss.job WHERE name NOT LIKE '\\_\\_%' AND state IN ('created', 'active', 'retry', 'failed') GROUP BY 1 ORDER BY 1`),
+    q<{ value: Record<string, { ok: boolean; detail: string; checked_at: string }>; measured_at: Date }>(
+      `SELECT value, measured_at FROM system_metrics WHERE metric = 'source_health' ORDER BY id DESC LIMIT 1`),
+    q<{ key: string; label: string; enabled: boolean; status: string | null; started_at: Date | null; out_count: number | null }>(`
+      SELECT s.key, s.label, s.enabled, r.status, r.started_at, r.out_count FROM sources s
+      LEFT JOIN LATERAL (SELECT status, started_at, out_count FROM runs WHERE stage = 'source.' || s.key ORDER BY started_at DESC LIMIT 1) r ON true ORDER BY s.key`),
+  ]);
+  const all = bySource.find((r) => r.source === 'all');
+  const perSource = bySource.filter((r) => r.source !== 'all');
+  const backlog = all && all.kept > 0 && all.dns_checked < all.kept * 0.5;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">System status</h1>
+      <PageHeader
+        title="Overview"
+        description={<>How many domains reached each step, counted by the day they were first seen. Recounted every hour (last: {ago(updated[0]?.at)}).</>}
+        actions={WINDOWS.map(([d, name]) => (
+          <Link key={d} href={`/?days=${d}`} className={cx('rounded-md border px-3 py-1.5 text-sm', d === days ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-300 bg-white')}>{name}</Link>
+        ))}
+      />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card title="Database">
-          <Status ok={dbOk} label={dbOk ? 'Connected' : 'Not reachable'} />
-        </Card>
-        <Card title="Worker">
-          <Status ok={workerOk} label={workerOk ? `${workers.length} running` : 'No worker alive (2 min)'} />
-          {workers.map((w) => (
-            <p key={w.id} className="mt-2 text-xs text-neutral-500">
-              {w.id} · beat {ago(w.last_beat)} · {w.info.rss_mb} MB · up {Math.round(w.info.uptime_s / 60)} min
-            </p>
-          ))}
-        </Card>
-        <Card title="Disk">
-          {disk ? (
-            <>
-              <p className="text-sm">{disk.value.disk_free_gb} GB free of {disk.value.disk_total_gb} GB</p>
-              <p className="mt-2 text-xs text-neutral-500">Checked {ago(disk.measured_at)}</p>
-            </>
-          ) : (
-            <p className="text-sm text-neutral-500">No measurement yet</p>
+      {!all && <Notice tone="amber">No funnel numbers for this period yet. The worker counts them every hour (job <code>system.funnel</code>).</Notice>}
+      {all && (
+        <Card title="Funnel">
+          <div className="space-y-3">
+            {STEPS.map(([k, name, hint], i) => {
+              const v = Number(all[k]);
+              const prev = i > 0 ? Number(all[STEPS[i - 1]![0]]) : v;
+              return (
+                <div key={k} className="grid grid-cols-[10rem_1fr_7rem_5rem] items-center gap-4 text-sm">
+                  <div><div className="font-medium">{name}</div><div className="text-xs text-neutral-500">{hint}</div></div>
+                  <Bar value={Math.log10(v + 1)} max={Math.log10(Number(all.candidates) + 1)} />
+                  <div className="text-right font-semibold tabular-nums">{fmt(v)}</div>
+                  <div className="text-right text-xs text-neutral-500">{i > 0 ? `${pct(v, prev)} of prev.` : ''}</div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-xs text-neutral-500">Bars use a log scale so millions and hundreds fit on one chart.</p>
+          {backlog && (
+            <div className="mt-4"><Notice tone="amber">Only {fmt(all.dns_checked)} of {fmt(all.kept)} kept domains have been DNS-checked so far: the
+              pipeline is still working through this period (highest-priority domains first).</Notice></div>
           )}
+        </Card>
+      )}
+
+      <Card title="By source">
+        <Table head={['Source', ...STEPS.map((s) => s[1])]} empty={!perSource.length}>
+          {perSource.map((r) => (
+            <tr key={r.source}>
+              <td className="font-medium">{r.source}</td>
+              {STEPS.map(([k]) => <td key={k} className="tabular-nums">{fmt(r[k])}</td>)}
+            </tr>
+          ))}
+        </Table>
+        <p className="mt-3 text-xs text-neutral-500">A domain found by several sources is counted under each of them; the funnel above counts it once.</p>
+      </Card>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card title="By niche">
+          <Table head={['Niche', 'Leads', 'With email', 'Qualified (A/B)']} empty={!niches.length}>
+            {niches.map((r) => (
+              <tr key={r.key}>
+                <td><Link className="hover:underline" href={`/explorer?niches=${r.key}`}>{r.name}</Link></td>
+                <td className="tabular-nums">{fmt(r.n)}</td>
+                <td className="tabular-nums">{fmt(r.with_email)} <span className="text-xs text-neutral-500">{pct(r.with_email, r.n)}</span></td>
+                <td className="tabular-nums">{fmt(r.qualified)}</td>
+              </tr>
+            ))}
+          </Table>
+        </Card>
+        <Card title="By brand">
+          <Table head={['Brand', 'Tier A', 'Tier B', 'Tier C']} empty={!brands.length}>
+            {brands.map((r) => (
+              <tr key={r.id}>
+                <td><Link className="hover:underline" href={`/explorer?brand=${r.id}&tiers=A,B`}>{r.name}</Link></td>
+                <td className="tabular-nums">{fmt(r.a)}</td><td className="tabular-nums">{fmt(r.b)}</td><td className="tabular-nums">{fmt(r.c)}</td>
+              </tr>
+            ))}
+          </Table>
         </Card>
       </div>
 
-      <Card title="Data lake (Parquet)">
-        <table className="w-full text-sm">
-          <thead className="text-left text-neutral-500">
-            <tr><th className="py-1 font-normal">Dataset</th><th className="font-normal">Files</th><th className="font-normal">Size</th></tr>
-          </thead>
-          <tbody>
-            {(disk?.value.lake ?? []).map((d: { dataset: string; files: number; bytes: number }) => (
-              <tr key={d.dataset} className="border-t border-neutral-100">
-                <td className="py-1.5">{d.dataset}</td><td>{fmt(d.files)}</td><td>{(d.bytes / 1e6).toFixed(1)} MB</td>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card title="Throughput (last 24 hours)">
+          <Table head={['Stage', 'Runs', 'Records', 'Per minute', 'Failed', 'Last run']} empty={!throughput.length}>
+            {throughput.map((r) => (
+              <tr key={r.stage}>
+                <td>{r.stage}</td><td className="tabular-nums">{fmt(r.runs)}</td><td className="tabular-nums">{fmt(r.records)}</td>
+                <td className="tabular-nums">{r.minutes && r.minutes > 0 ? fmt(Math.round(r.ok_records / r.minutes)) : '–'}</td>
+                <td className={cx('tabular-nums', r.failed > 0 && 'text-red-700')}>{fmt(r.failed)}</td><td className="text-neutral-500">{ago(r.last)}</td>
               </tr>
             ))}
-            {!disk?.value.lake?.length && <tr><td className="py-1.5 text-neutral-500" colSpan={3}>Empty</td></tr>}
-          </tbody>
-        </table>
-      </Card>
+          </Table>
+          <p className="mt-3 text-xs text-neutral-500">Per minute = records ÷ time spent working (not wall-clock), i.e. the speed of the stage while it runs.</p>
+        </Card>
+        <Card title="Queue depth">
+          <Table head={['Queue', 'Waiting', 'Running', 'Retrying', 'Failed (24 h)']} empty={!queues.length}>
+            {queues.map((r) => (
+              <tr key={r.name}>
+                <td>{r.name}</td><td className="tabular-nums">{fmt(r.waiting)}</td><td className="tabular-nums">{fmt(r.active)}</td>
+                <td className="tabular-nums">{fmt(r.retry)}</td><td className={cx('tabular-nums', r.failed > 0 && 'text-red-700')}>{fmt(r.failed)}</td>
+              </tr>
+            ))}
+          </Table>
+        </Card>
+      </div>
 
-      <Card title="Queues (jobs by state)">
-        <table className="w-full text-sm">
-          <thead className="text-left text-neutral-500">
-            <tr>{['Queue', 'Waiting', 'Active', 'Retry', 'Done', 'Failed'].map((h) => <th key={h} className="py-1 font-normal">{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {[...byQueue.entries()].map(([name, s]) => (
-              <tr key={name} className="border-t border-neutral-100">
-                <td className="py-1.5">{name}</td>
-                <td>{fmt(s.created ?? 0)}</td><td>{fmt(s.active ?? 0)}</td><td>{fmt(s.retry ?? 0)}</td>
-                <td>{fmt(s.completed ?? 0)}</td><td className={s.failed ? 'text-red-700' : ''}>{fmt(s.failed ?? 0)}</td>
+      <Card title="Source health" actions={<Link className="text-sm text-neutral-600 hover:underline" href="/sources">Manage sources</Link>}>
+        <Table head={['Source', 'Enabled', 'Reachable', 'Last run', 'Domains in last run']}>
+          {sourceRuns.map((s) => {
+            const h = health[0]?.value?.[s.key];
+            return (
+              <tr key={s.key}>
+                <td className="font-medium">{s.label}</td>
+                <td>{s.enabled ? 'Yes' : 'No'}</td>
+                <td>{h ? <span title={h.detail}><Dot ok={h.ok} label={h.ok ? 'OK' : 'Problem'} /> <span className="text-xs text-neutral-500">{ago(h.checked_at)}</span></span> : <span className="text-neutral-500">not checked yet</span>}</td>
+                <td>{s.status ? <><span className={s.status === 'failed' ? 'text-red-700' : ''}>{s.status}</span> <span className="text-xs text-neutral-500">{ago(s.started_at)}</span></> : '–'}</td>
+                <td className="tabular-nums">{fmt(s.out_count)}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            );
+          })}
+        </Table>
       </Card>
-
-      <Card title="Recent runs">
-        <table className="w-full text-sm">
-          <thead className="text-left text-neutral-500">
-            <tr>{['Stage', 'Status', 'In', 'Out', 'Per minute', 'Took', 'Started'].map((h) => <th key={h} className="py-1 font-normal">{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {runs.map((r) => (
-              <tr key={r.id} className="border-t border-neutral-100">
-                <td className="py-1.5">{r.stage}</td>
-                <td className={r.status === 'failed' ? 'text-red-700' : r.status === 'running' ? 'text-amber-700' : 'text-emerald-700'}>{r.status}</td>
-                <td>{fmt(r.in_count)}</td><td>{fmt(r.out_count)}</td><td>{fmt(r.per_minute)}</td>
-                <td>{r.seconds != null ? `${r.seconds.toFixed(1)}s` : ''}</td><td>{ago(r.started_at)}</td>
-              </tr>
-            ))}
-            {!runs.length && <tr><td className="py-1.5 text-neutral-500" colSpan={7}>No runs yet</td></tr>}
-          </tbody>
-        </table>
-      </Card>
+      <div className="grid gap-4 sm:grid-cols-4">
+        <Stat label="Candidates in period" value={fmt(all?.candidates)} />
+        <Stat label="Leads in niche" value={fmt(all?.in_niche)} />
+        <Stat label="With email" value={fmt(all?.with_contact)} sub={all ? pct(all.with_contact, all.in_niche) : undefined} />
+        <Stat label="Qualified (A/B)" value={fmt(all?.qualified)} />
+      </div>
     </div>
   );
 }

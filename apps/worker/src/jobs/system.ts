@@ -68,3 +68,16 @@ export async function lakeSelftest(data: { rows?: number }): Promise<Record<stri
     return { file, writeMs, readMs, total: Number(res!.total), distinct: Number(res!.distinct_domains) };
   });
 }
+
+/** At worker start: which fingerprint data is loaded (shown on the dashboard Settings page). */
+export async function fingerprintInfo(dir: string, technologies: number): Promise<void> {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(`${dir}/SOURCE.md`, 'utf8').catch(() => '');
+  const overrides = JSON.parse(await readFile(`${dir}/overrides.json`, 'utf8').catch(() => '{}')) as Record<string, { _note?: string }>;
+  await db().query(`INSERT INTO system_metrics (metric, value) VALUES ('fingerprints', $1)`, [JSON.stringify({
+    technologies,
+    commit: /Commit: (.+)/.exec(source)?.[1]?.trim() ?? null,
+    source: /Source: (\S+)/.exec(source)?.[1] ?? null,
+    overrides: Object.entries(overrides).filter(([k]) => !k.startsWith('_')).map(([name, o]) => ({ name, note: o._note ?? null })),
+  })]);
+}

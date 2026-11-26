@@ -1,6 +1,8 @@
 # One image definition, two targets: "worker" and "web".
 FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true
+# No usage data is sent to Vercel by Next.js.
+ENV NEXT_TELEMETRY_DISABLED=1
 # The optional "ca" secret is only used when building behind a TLS-inspecting proxy.
 RUN --mount=type=secret,id=ca,required=false \
     NODE_EXTRA_CA_CERTS=/run/secrets/ca corepack enable && \
@@ -34,12 +36,13 @@ CMD ["pnpm", "--filter", "@lead/worker", "start"]
 
 # Web: build Next.js, then run the small standalone server.
 FROM deps AS web-build
+COPY packages packages
 COPY apps/web apps/web
 RUN pnpm --filter @lead/web build
 
 FROM node:22-bookworm-slim AS web
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
 COPY --from=web-build /app/apps/web/.next/standalone ./
 COPY --from=web-build /app/apps/web/.next/static ./apps/web/.next/static
 EXPOSE 3000

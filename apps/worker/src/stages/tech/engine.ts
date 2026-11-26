@@ -15,7 +15,7 @@ export const TAG_SEP = String.fromCharCode(92) + ';';
  * requiresCategory. Versions from "\;version:\1" templates.
  * Not evaluated: js (needs a browser), xhr, dns, certIssuer, robots, probe.
  */
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../packages/fingerprints');
+export const FINGERPRINTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../packages/fingerprints');
 
 interface Pat { re: RegExp; confidence: number; version?: string; reM?: RegExp }
 interface DomPat { selector: string; token: string | null; kind: 'exists' | 'attrs' | 'text' | 'props'; exists?: Pat; attrs?: [string, Pat][]; text?: Pat }
@@ -120,7 +120,7 @@ export class TechEngine {
   readonly categories: Map<number, string>;
   private byName = new Map<string, Tech>();
 
-  constructor(dir = ROOT) {
+  constructor(dir = FINGERPRINTS_DIR) {
     const cats = JSON.parse(readFileSync(path.join(dir, 'categories.json'), 'utf8')) as Record<string, { name: string }>;
     this.categories = new Map(Object.entries(cats).map(([id, c]) => [Number(id), c.name]));
     const raw: Record<string, any> = {};

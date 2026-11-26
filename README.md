@@ -38,11 +38,13 @@ You need **Docker** installed (Docker Desktop on Windows/Mac, Docker Engine on L
    cp .env.example .env
    ```
    Change `POSTGRES_PASSWORD`. Set `CRAWLER_CONTACT_EMAIL` (needed from Phase 3).
+   Set `DASHBOARD_PASSWORD` to a long random password — the dashboard will not open without it.
 3. Start everything:
    ```bash
    docker compose up -d --build
    ```
-4. Open **http://localhost:3000** (on a server: `http://SERVER-IP:3000`).
+4. Open **http://localhost:3000** (on a server: `http://SERVER-IP:3000`). Your browser asks for a user name
+   (`admin`, or your `DASHBOARD_USER`) and the `DASHBOARD_PASSWORD`.
 
 Stop: `docker compose down` (your data is kept). Update after pulling new code: run step 3 again.
 
@@ -59,6 +61,7 @@ Stop: `docker compose down` (your data is kept). Update after pulling new code: 
 | `DUCKDB_MAX_TEMP` | Most disk DuckDB may use for very big queries (a query fails and retries instead of filling the disk) | `4GB` |
 | `DNS_MODE` | Empty = use the dashboard setting (`udp`, fastest). `doh` = DNS over HTTPS, only if your network blocks normal DNS | empty |
 | `CHROME_PATH` | Chrome/Chromium for Lighthouse. The Docker worker already has Chromium; set this only when running the worker outside Docker | empty |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | Dashboard login. **Required**: without a password the dashboard shows a message and nothing else | `admin` / empty |
 | `WEB_PORT` | Dashboard port | `3000` |
 | `LOG_LEVEL` | How much the worker writes to its log: `error`, `warn`, `info`, `debug` | `info` |
 
@@ -76,6 +79,7 @@ table and will be editable from the dashboard (Settings page, Phase 9).
 | See job queues | `docker compose exec worker pnpm --filter @lead/worker jobs list` |
 | Run a job now | `docker compose exec worker pnpm --filter @lead/worker jobs run system.lake-selftest '{"rows":1000000}'` |
 | Run more workers (more speed) | `docker compose up -d --scale worker=3` |
+| Recount the dashboard funnel now | `docker compose exec worker pnpm --filter @lead/worker jobs funnel` |
 | Rescore every lead now (after editing brands) | `docker compose exec worker pnpm --filter @lead/worker jobs score full` |
 | Refresh saved segments now | `docker compose exec worker pnpm --filter @lead/worker jobs segments` |
 | Count a filter without saving it | `docker compose exec worker pnpm --filter @lead/worker jobs count brand_1 '{"platforms":["Shopify"],"tiers":["A","B"]}'` |
@@ -229,6 +233,34 @@ no Klaviyo, Lighthouse < 50*. Filter keys: `tiers`, `min_score`, `niches`, `sub_
 `lighthouse_perf_max`, `completeness_min`, `has_email`, `email_types`, `findings_has`, `findings_any`, `findings_not`,
 `first_seen_after`. Members are refreshed daily (03:17 UTC) and keep the date they joined. Anything in the
 `suppression` table (domain or email) is never in a segment, and is checked again before every export.
+
+---
+
+## Dashboard (Phase 9)
+
+Open **http://localhost:3000** (or `http://SERVER-IP:3000`) and log in. Every page reads the lead database only,
+so it stays fast with millions of rows in the data lake.
+
+| Page | What you do there |
+|---|---|
+| **Overview** | Funnel for today / 7 / 30 days (candidates → resolved → fetched → in niche → with email → qualified), per source, niche and brand; speed per stage, queue depth, source health |
+| **Explorer** | Filter every lead for one brand (tier, niche, platform, technologies has / has not, country, products, price, Lighthouse speed, findings, email type…), 50 per page. Filters live in the address bar, so a view can be bookmarked. **Save as segment** from here |
+| **Segments** | Saved filters per brand: saved members (refreshed daily) and how many match right now; open in the explorer, rename, refresh, delete |
+| **Lead detail** | Everything about one lead: score per brand with the reason, first lines (Copy button), contact and where it was found, store, findings, Lighthouse, technologies. **Delete and suppress** removes the lead and puts its domain + email on the do-not-contact list |
+| **Brands** | Edit the 5 brands without code: profile and services, platforms and countries, niche weights, problem → service map, scoring weights and tier cut-offs, first-line templates (checked before saving). Shared templates on the Brands page. **Rescore now** |
+| **Niches** | Lead counts per niche, saturation, on/off, excluded; per sub-niche: add/remove keywords (positive or negative) and URL patterns. **Re-classify all** runs every fetched site through the current rules again (in the background) |
+| **Sources** | Turn sources on/off, change their schedule, **Run now**, health, last runs with speed and drop reasons |
+| **Exports** | Built in Phase 10 (CSV / Excel) |
+| **Settings** | Do-not-contact list (add, CSV import, search, remove); every engine setting (crawl speed, rate limits, batch sizes, audit and scoring rules) with checks; fingerprint version; failed jobs |
+| **System** | Database, worker and disk status; queues; recent runs |
+
+**How to set the dashboard password (click by click)**
+1. Open the project folder and the file `.env` in any text editor.
+2. Find the line `DASHBOARD_PASSWORD=` and type a long password after the `=` (no spaces), e.g. from a password manager.
+3. Save the file and run `docker compose up -d` in the project folder.
+4. Reload the dashboard: the browser asks for user `admin` and your password.
+
+Never put the dashboard on the internet without the password; it can change brands and the do-not-contact list.
 
 ---
 

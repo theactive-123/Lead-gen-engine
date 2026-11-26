@@ -14,7 +14,9 @@ import { runSignalsBatch, signalsPlan } from './stages/signals/stage.js';
 import { auditPlan, runAuditBatch } from './stages/audit/stage.js';
 import { lighthousePlan, runLighthouseBatch } from './stages/lighthouse/stage.js';
 import { runScoring } from './stages/score/stage.js';
-import { beat, diskUsage, heartbeat, lakeSelftest } from './jobs/system.js';
+import { beat, diskUsage, fingerprintInfo, heartbeat, lakeSelftest } from './jobs/system.js';
+import { FINGERPRINTS_DIR, TechEngine } from './stages/tech/engine.js';
+import { funnel, sourceHealth } from './jobs/funnel.js';
 
 /**
  * Worker process: applies migrations, connects to the queue, registers job handlers
@@ -49,15 +51,34 @@ await boss.work<{ rows?: number }>(
 );
 
 // Sources: one queue per source ("source.<key>"), scheduled from the `sources` table.
-const sourceRows = (await db().query<{ key: string; schedule: string; enabled: boolean }>('SELECT key, schedule, enabled FROM sources')).rows;
+// The dashboard can turn sources on/off and change schedules: re-read every 5 minutes (job system.sync-sources).
+async function syncSources(): Promise<Record<string, string>> {
+  const rows = (await db().query<{ key: string; schedule: string; enabled: boolean }>('SELECT key, schedule, enabled FROM sources')).rows;
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    if (!SOURCES[row.key]) continue;
+    const name = `source.${row.key}`;
+    if (row.enabled) {
+      await boss.schedule(name, row.schedule);
+      out[row.key] = row.schedule;
+    } else {
+      await boss.unschedule(name).catch(() => {});
+      out[row.key] = 'off';
+    }
+  }
+  return out;
+}
+const sourceRows = (await db().query<{ key: string }>('SELECT key FROM sources')).rows;
 for (const row of sourceRows) {
   if (!SOURCES[row.key]) continue;
   const name = `source.${row.key}`;
   await ensureQueue(boss, name, { exclusive: true, expireInSeconds: 6 * 60 * 60 });
   await boss.work(name, logged(name, () => runSource(row.key)));
-  if (row.enabled) await boss.schedule(name, row.schedule);
-  else await boss.unschedule(name).catch(() => {});
 }
+await syncSources();
+await ensureQueue(boss, 'system.sync-sources', { exclusive: true, expireInSeconds: 120 });
+await boss.work('system.sync-sources', logged('system.sync-sources', () => syncSources()));
+await boss.schedule('system.sync-sources', '*/5 * * * *');
 
 // Pipeline stages. Normalise rebuilds the registry; the planner tops up the DNS and fetch queues;
 // batch jobs do the work. Several workers can share these queues.
@@ -76,6 +97,8 @@ await ensureQueue(boss, 'stage.lighthouse', { expireInSeconds: 3600 });
 await ensureQueue(boss, 'stage.score', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'segments.refresh', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
+await ensureQueue(boss, 'system.funnel', { exclusive: true, expireInSeconds: 1800 });
+await ensureQueue(boss, 'system.source-health', { exclusive: true, expireInSeconds: 600 });
 await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
 // Each stage is planned on its own: one failing stage (logged with its name) must not block the others.
 const plans = [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan, auditPlan, lighthousePlan];
@@ -106,11 +129,15 @@ await boss.work<Batch>('stage.lighthouse', { localConcurrency: 1 }, logged<Batch
 await boss.work<{ full?: boolean }>('stage.score', logged<{ full?: boolean }>('stage.score', (d) => runScoring({ full: d?.full })));
 await boss.work<{ id?: number }>('segments.refresh', logged<{ id?: number }>('segments.refresh', (d) => refreshSegments(d?.id)));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
+await boss.work('system.funnel', logged('system.funnel', () => funnel()));
+await boss.work('system.source-health', logged('system.source-health', () => sourceHealth()));
 await boss.schedule('stage.normalize', '*/15 * * * *');
 await boss.schedule('stage.plan', '* * * * *');
 await boss.schedule('system.cleanup', '37 2 * * *');
 await boss.schedule('stage.score', '7,22,37,52 * * * *');
 await boss.schedule('segments.refresh', '17 3 * * *');
+await boss.schedule('system.funnel', '43 * * * *');
+await boss.schedule('system.source-health', '29 * * * *');
 
 // Recurring jobs (cron, UTC). pg-boss makes sure only one worker runs each tick.
 await boss.schedule(QUEUES.heartbeat, '* * * * *');
@@ -119,6 +146,8 @@ await boss.schedule(QUEUES.diskUsage, '*/15 * * * *');
 // Run the cheap system jobs once right away so the dashboard has data immediately.
 await boss.send(QUEUES.heartbeat, {});
 await boss.send(QUEUES.diskUsage, {});
+await boss.send('system.source-health', {});
+await fingerprintInfo(FINGERPRINTS_DIR, new TechEngine().techs.length).catch((err) => logger.warn({ err }, 'fingerprint info failed'));
 
 logger.info({ concurrency, queues: Object.values(QUEUES) }, 'worker started');
 

@@ -1,5 +1,6 @@
 import { QUEUES, closeDb, countSegment, db, queue, refreshSegments, stopQueue } from '@lead/shared';
 import { runScoring } from './stages/score/stage.js';
+import { funnel } from './jobs/funnel.js';
 import { SOURCES } from './sources/index.js';
 import { runSource } from './sources/runner.js';
 import { dnsPlan } from './stages/dns/stage.js';
@@ -23,13 +24,16 @@ import { lighthousePlan } from './stages/lighthouse/stage.js';
  *   pnpm jobs normalize                     -> rebuild the domain registry now
  *   pnpm jobs plan                          -> plan batches for every pipeline stage now
  *   pnpm jobs score [full]                  -> score leads for every brand now (full = every lead)
+ *   pnpm jobs funnel                        -> recount the dashboard funnel now
  *   pnpm jobs segments [id]                 -> refresh saved segment members now
  *   pnpm jobs count <brand_key> '<filter json>'  -> live count of a segment filter
  */
 const [cmd, name, json] = process.argv.slice(2);
 const boss = await queue();
 
-if (cmd === 'score') {
+if (cmd === 'funnel') {
+  console.log(await funnel());
+} else if (cmd === 'score') {
   console.log(JSON.stringify(await runScoring({ full: name === 'full' }), null, 1));
 } else if (cmd === 'segments') {
   console.table(await refreshSegments(name ? Number(name) : undefined));

@@ -181,6 +181,42 @@ Lighthouse < 50" = 5 leads (only 136 have Lighthouse so far); all 5 re-checked c
 - Company names: HTML entities (`&amp;`, `&#039;`), title taglines, theme placeholders (`#site_title`), names without letters.
   `cleanCompanyName()` (keeps the title part matching the domain); 2,042 names cleaned, 290 dropped (export falls back to domain).
 
+## Phase 9 — Dashboard (done 2026-11-26)
+Next.js 16 (App Router, server components + server actions), Tailwind, shadcn-style components written in (no UI library).
+Pages: Overview, Explorer, Segments (+ detail), Lead detail, Brands (+ edit), Niches (+ keywords), Sources, Exports (Phase 10 shell),
+Settings, System. Migration 020.
+
+**Built for it (worker side)**
+- `system.funnel` (hourly, 18 s): lake counts (registry → DNS → pages) + Postgres counts (in niche → email → A/B) per first-seen
+  day and source into `funnel_daily`, so the dashboard never scans the lake.
+- `system.source-health` (hourly), `system.sync-sources` (every 5 min: schedule/on-off changes from the dashboard reach the worker
+  without a restart), fingerprint version recorded at worker start.
+- Segment filter split into a pure module (`@lead/shared/segment-filter`) used by both worker and dashboard.
+- `classify.reclassify_after`: "Re-classify all" button; the planner re-does anything classified before it.
+- Login: HTTP Basic auth in `proxy.ts` (Next 16 name for middleware, Node runtime → password read at start, not baked into the build).
+  Production refuses to serve without `DASHBOARD_PASSWORD` (503). Next.js telemetry disabled in the image.
+
+**Verified**
+- Every page 200 in a real browser, no browser errors; 404 page for unknown leads. Server times 0.02–0.8 s (explorer count + page over
+  24k leads × 5 brands); 2–8 s only while the worker was starting next to it (load average 13 on 4 cores).
+- 19 browser checks of every write action on the real database, all reverted afterwards: brand save + validation (tier A < B rejected),
+  template rules ("!" and unknown placeholder rejected, valid saved, deleted), segment saved from explorer (852 = explorer count) and
+  deleted, suppression (URL → domain, junk rejected, CSV import: 2 added, duplicate and header skipped), settings (type change and
+  bad JSON rejected), keyword add/remove, source "Run now" queued, lead delete → 404 + domain and email suppressed.
+- Login: 401 without / with a wrong password, 200 with it; Docker web image built and served all pages (503 until a password is set).
+
+**Bugs found & fixed in this phase**
+- Overview speed per stage counted runs cut off by a container restart (7.7 h "running") → speed now from successful runs only.
+- Explorer table too wide (last columns cut off) → niche + top need and platform + country merged; sub-niches grouped by niche.
+- Dead-letter copies carry no job name in pg-boss 12 → Settings shows the failed jobs themselves (name + error).
+
+**Known limits**
+- "Delete and suppress" removes the lead from Postgres and blocks it from segments/exports; the raw rows stay in the data lake and a
+  re-crawl can bring the lead back into the explorer (still suppressed). Purging the lake and skipping suppressed domains in the
+  pipeline: Phase 11.
+- Screenshots in `docs/screenshots/phase9-*.png` (pages without contact data; explorer/lead screenshots are not committed because they
+  show real business emails).
+
 **Known limits / next**
 - One worker shares one DuckDB memory + temp budget; a burst (e.g. CT catching up after downtime + planner + normalize) can fail a job,
   which then retries. Phase 11: limit concurrent heavy DuckDB jobs.

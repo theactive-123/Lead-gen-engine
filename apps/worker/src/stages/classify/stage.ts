@@ -19,7 +19,10 @@ export const classifyPlan: StagePlan = {
   async todoSql() {
     if (!(await datasetExists('pages')) || !(await datasetExists('tech'))) return null;
     const hasProbe = await datasetExists('store_probe');
-    const done = (await datasetExists('classified')) ? `AND p.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('classified')}))` : '';
+    // "Re-classify all" (dashboard → Niches) sets classify.reclassify_after: anything classified before it is done again.
+    const after = new Date(String(await setting<string | null>('classify.reclassify_after', null) ?? 0));
+    const since = Number.isFinite(after.getTime()) && after.getTime() > 0 ? ` WHERE classified_at >= TIMESTAMP '${after.toISOString().replace('T', ' ').replace('Z', '')}'` : '';
+    const done = (await datasetExists('classified')) ? `AND p.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('classified')})${since})` : '';
     const probeJoin = hasProbe
       ? `LEFT JOIN (SELECT domain, arg_max(ok, probed_at) AS ok, arg_max(product_count, probed_at) AS product_count,
                           arg_max(count_method, probed_at) AS count_method, arg_max(sample_titles, probed_at) AS sample_titles,
