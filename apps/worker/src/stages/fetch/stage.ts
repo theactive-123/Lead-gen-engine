@@ -32,6 +32,8 @@ export const fetchPlan: StagePlan = {
       inNicheDays: Number(await setting('recheck.in_niche_days', 30)),
       finalStatuses: await setting<string[]>('recheck.final_statuses', ['robots_disallowed', 'offsite_redirect']),
       hasClassified: await datasetExists('classified'),
+      hasTech: await datasetExists('tech'),
+      hasHtml: await datasetExists('html'),
     })})` : '';
     return `
       SELECT d.domain, r.priority, len(d.a) > 0 AS apex_ok, d.a, d.www_cname, d.www_a, d.mx, d.ns,

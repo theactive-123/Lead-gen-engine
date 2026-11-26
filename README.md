@@ -298,6 +298,20 @@ get an apostrophe in CSV; Excel files store everything as plain text). Phone num
 - **Every run is logged** in the `runs` table: records in/out, drops by reason, errors, speed per minute.
 - **Resume points** (`checkpoints` table) let each source continue where it stopped.
 - **Disk monitor** records free space and data-lake size every 15 minutes.
+- **Disk guard**: no new work is planned while free disk is below `disk.min_free_gb` (default 20 GB).
+- **Re-checks** (`recheck.*` settings): in-niche websites are fetched again every 30 days and every later stage redoes
+  them in order (a stage's result counts only if it is newer than its input); domains with no working DNS or no usable
+  homepage are tried again 7, 21 and 45 days after the first attempt; robots.txt refusals are never retried.
+- **Polite back-off**: the crawler halves its speed when many requests time out, and every website gets at most
+  1 request per second. **Circuit breaker**: a source that fails 3 runs in a row pauses (30 min, doubling to 24 h).
+- **One heavy job at a time**: registry rebuild, funnel count, compaction and forgetting share a database lock.
+- **Compaction** (daily 04:41 UTC): the many small files of each finished day are merged into one (tested: 6,417 → 92
+  files, identical rows), so scans stay fast as the lake grows.
+- **Deleted means deleted**: "Delete and suppress" removes the lead from the database, rewrites every data-lake file
+  without it (worker job `system.forget`), and marks it in the registry so it is never crawled again.
+- **Daily report** (06:03 UTC, on the Overview page) and `jobs report 7`: volume vs the 1M/month target, funnel, speed
+  per stage, backlog and the bottleneck, failed jobs, disk.
+- **Nightly backup** of the lead database to `data/backups` (7 days kept). Restore: [docs/DEPLOY.md](docs/DEPLOY.md#backups-and-restore).
 
 ---
 
@@ -312,6 +326,15 @@ data/lake       Parquet data lake (created at runtime, not in git)
 docs/           progress log and screenshots
 ```
 
-## Server size
+## Server size and going live
 
-For ~1M records/month: **4 CPU cores, 16–24 GB RAM, 150–200 GB disk** (e.g. Oracle Cloud Always Free ARM).
+**Step-by-step setup (your PC, or a free Oracle Cloud server): [docs/DEPLOY.md](docs/DEPLOY.md).**
+
+| | Minimum | Comfortable |
+|---|---|---|
+| CPU | 2 cores | 4 cores |
+| Memory | 8 GB | 16 GB |
+| Free disk | 100 GB | 150–200 GB |
+
+Oracle Cloud's Always Free Arm server (checked 2026-11-26) is **2 cores and 12 GB** with 200 GB disk in total — enough,
+with the smaller settings listed in the deploy guide.

@@ -37,7 +37,12 @@ beforeAll(async () => {
     // the tech stage below: b.com was fetched again after its analysis
     { domain: 'a.com', pass: true, fetch_status: 'ok', fetched_at: ago(5) },
     { domain: 'b.com', pass: true, fetch_status: 'ok', fetched_at: ago(5) }, { domain: 'b.com', pass: true, fetch_status: 'ok', fetched_at: ago(1) },
+    // usable page, never analysed, HTML already expired → must be fetched again
+    { domain: 'stranded.com', pass: true, fetch_status: 'ok', fetched_at: ago(5) },
+    // usable page, not analysed yet, HTML still there → just waiting for the tech stage
+    { domain: 'waiting.com', pass: true, fetch_status: 'ok', fetched_at: ago(1) },
   ], { columns: pages, name: 'pages' });
+  await lake.writeParquet('html', [{ domain: 'waiting.com', html: '<html></html>' }], { columns: { domain: 'VARCHAR', html: 'VARCHAR' }, name: 'html' });
   await lake.writeParquet('classified', [
     { domain: 'fresh-in.com', in_scope: true, classified_at: ago(9) },
     { domain: 'stale-in.com', in_scope: true, classified_at: ago(39) },
@@ -64,6 +69,12 @@ describe('re-check schedule', () => {
     expect(done).not.toContain('stale-in.com'); // in niche, 40 days old → fetch again
     expect(done).not.toContain('timeout8.com'); // first retry due at day 7
     expect(done).not.toContain('parked.com'); // no usable page yet → retried too
+  });
+  it('a usable page whose HTML expired before technology detection ran is fetched again', async () => {
+    const done = await domains(plan.fetchDoneSql({ days: [7, 21, 45], inNicheDays: 30, finalStatuses: [], hasClassified: true, hasTech: true, hasHtml: true }));
+    expect(done).not.toContain('stranded.com');
+    expect(done).toContain('waiting.com');
+    expect(done).toContain('a.com'); // analysed already
   });
   it('later stages redo a domain whose input is newer than their result', async () => {
     const current = await domains(plan.currentSql({ dataset: 'tech', ts: 'analyzed_at' }, [{ dataset: 'pages', ts: 'fetched_at', where: 'pass' }]));

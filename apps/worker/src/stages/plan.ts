@@ -134,15 +134,22 @@ export function dnsDoneSql(days: number[]): string {
  *  - no usable page (timeout, error, parked, coming soon…): retried on the `days` schedule;
  *  - `finalStatuses` (robots.txt refusal, redirect to another domain) are never retried.
  */
-export function fetchDoneSql(o: { days: number[]; inNicheDays: number; finalStatuses: string[]; hasClassified: boolean }): string {
+export function fetchDoneSql(o: { days: number[]; inNicheDays: number; finalStatuses: string[]; hasClassified: boolean; hasTech?: boolean; hasHtml?: boolean }): string {
   const next = nextRetrySql('n', o.days);
   const finals = o.finalStatuses.length ? o.finalStatuses.map(sqlLiteral).join(', ') : `''`;
   const inScope = o.hasClassified
     ? `SELECT domain FROM read_parquet(${datasetGlobFor('classified')}) GROUP BY 1 HAVING arg_max(in_scope, classified_at)`
     : `SELECT NULL::VARCHAR AS domain WHERE false`;
+  // A usable page whose stored HTML expired before technology detection reached it can never be analysed:
+  // fetch it again instead of leaving it stuck.
+  const stranded = o.hasTech && o.hasHtml
+    ? `SELECT domain FROM read_parquet(${datasetGlobFor('pages')}, union_by_name = true) WHERE pass
+         AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlobFor('tech')}))
+         AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlobFor('html')}))`
+    : `SELECT NULL::VARCHAR AS domain WHERE false`;
   return `SELECT domain FROM (SELECT domain, min(fetched_at) AS first, max(fetched_at) AS last, count(*) AS n,
                                      arg_max(pass, fetched_at) AS ok, arg_max(fetch_status, fetched_at) AS status
                               FROM read_parquet(${datasetGlobFor('pages')}, union_by_name = true) GROUP BY 1)
-          WHERE (ok AND (domain NOT IN (${inScope}) OR last >= ${NOW_UTC} - to_days(${Number(o.inNicheDays)})))
+          WHERE (ok AND domain NOT IN (${stranded}) AND (domain NOT IN (${inScope}) OR last >= ${NOW_UTC} - to_days(${Number(o.inNicheDays)})))
              OR (NOT coalesce(ok, false) AND (status IN (${finals}) OR ${next} IS NULL OR ${NOW_UTC} < first + to_days(CAST(${next} AS INTEGER))))`;
 }
