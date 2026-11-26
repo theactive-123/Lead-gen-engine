@@ -47,22 +47,24 @@ export async function buildReport(days: number) {
   const lakeBytes = (v?: { lake: { bytes: number }[] }) => (v?.lake ?? []).reduce((n, d) => n + Number(d.bytes), 0);
 
   // Backlog = what each stage still has to do right now; days to clear = backlog / what it did per day in this window.
-  const backlog: { stage: string; todo: number; per_day: number; days_to_clear: number | null }[] = [];
+  const backlog: { stage: string; todo: number; per_day: number; days_to_clear: number | null; held: string | null }[] = [];
   for (const p of [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan, auditPlan, lighthousePlan]) {
     try {
       const sql = await p.todoSql();
       const todo = sql ? Number((await lakeQuery<{ n: bigint }>(`SELECT count(*) AS n FROM (${sql})`))[0]!.n) : 0;
       const done = stages.find((s) => s.stage === `stage.${p.key}`)?.records ?? 0;
       const perDay = done / Math.max(1, days);
-      backlog.push({ stage: p.key, todo, per_day: Math.round(perDay), days_to_clear: perDay > 0 ? Math.round((todo / perDay) * 10) / 10 : todo ? null : 0 });
+      // A stage paused on purpose (backpressure: the next stage is far behind) is not the bottleneck itself.
+      const held = p.hold ? await p.hold() : null;
+      backlog.push({ stage: p.key, todo, per_day: Math.round(perDay), days_to_clear: perDay > 0 ? Math.round((todo / perDay) * 10) / 10 : todo ? null : 0, held });
     } catch (err) {
-      backlog.push({ stage: p.key, todo: -1, per_day: 0, days_to_clear: null });
+      backlog.push({ stage: p.key, todo: -1, per_day: 0, days_to_clear: null, held: null });
     }
   }
   const newDomains = fresh.find((f) => f.source === 'all')?.new_domains ?? 0; // each domain once, even if several sources found it
   const perMonth = Math.round((newDomains / Math.max(1, days)) * 30);
   const target = Number(await setting('report.monthly_target', 1_000_000));
-  const ranked = backlog.filter((b) => b.stage !== 'lighthouse' && b.todo > 0).sort((a, z) => (z.days_to_clear ?? Infinity) - (a.days_to_clear ?? Infinity));
+  const ranked = backlog.filter((b) => b.stage !== 'lighthouse' && b.todo > 0 && !b.held).sort((a, z) => (z.days_to_clear ?? Infinity) - (a.days_to_clear ?? Infinity));
   return {
     days, created_at: new Date().toISOString(),
     volume: { new_domains: newDomains, per_day: Math.round(newDomains / Math.max(1, days)), projected_per_month: perMonth, target, on_track: perMonth >= target, sources },
@@ -94,7 +96,7 @@ export function reportText(r: Report): string {
   L.push('STAGES  records   per min   failed runs');
   for (const s of r.stages) L.push(`  ${s.stage.padEnd(18)} ${n(s.records).padStart(10)} ${n(s.per_min).padStart(9)} ${String(s.failed).padStart(8)}`);
   L.push('', 'BACKLOG  to do now   done/day   days to clear');
-  for (const b of r.backlog) L.push(`  ${b.stage.padEnd(11)} ${(b.todo < 0 ? 'error' : n(b.todo)).padStart(11)} ${n(b.per_day).padStart(10)} ${(b.days_to_clear == null ? '–' : String(b.days_to_clear)).padStart(10)}`);
+  for (const b of r.backlog) L.push(`  ${b.stage.padEnd(11)} ${(b.todo < 0 ? 'error' : n(b.todo)).padStart(11)} ${n(b.per_day).padStart(10)} ${(b.days_to_clear == null ? '–' : String(b.days_to_clear)).padStart(10)}${b.held ? `   paused: ${b.held}` : ''}`);
   if (r.bottleneck) L.push('', `BOTTLENECK  ${r.bottleneck.stage}: ${n(r.bottleneck.todo)} waiting, ~${r.bottleneck.days_to_clear ?? '?'} days at the current speed`);
   if (r.failed_jobs.length) L.push('', `FAILED JOBS  ${r.failed_jobs.map((f) => `${f.name} ${f.n}`).join(', ')}`);
   if (r.disk) L.push('', `DISK  ${r.disk.free_gb} GB free of ${r.disk.total_gb} GB · data lake ${r.disk.lake_gb} GB${r.disk.lake_growth_gb != null ? ` (+${r.disk.lake_growth_gb} GB in this window)` : ''}`);

@@ -76,7 +76,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <Stat label="New domains per day" value={fmt(report.value.volume.per_day)}
               sub={<>≈ {fmt(report.value.volume.projected_per_month)} per month · target {fmt(report.value.volume.target)} {report.value.volume.on_track ? '✓' : '— below target'}</>} />
             <Stat label="Bottleneck" value={report.value.bottleneck?.stage ?? 'none'}
-              sub={report.value.bottleneck ? <>{fmt(report.value.bottleneck.todo)} waiting · ~{report.value.bottleneck.days_to_clear ?? '?'} days at current speed</> : 'every stage keeps up'} />
+              sub={report.value.bottleneck ? <>{fmt(report.value.bottleneck.todo)} waiting · {report.value.bottleneck.days_to_clear != null ? `~${report.value.bottleneck.days_to_clear} days at the last 24 h speed` : 'did not run in the last 24 h'}</> : 'every stage keeps up'} />
             <Stat label="Failed jobs (24 h)" value={fmt(report.value.failed_jobs.reduce((n, f) => n + f.n, 0))}
               sub={report.value.failed_jobs.map((f) => `${f.name} ${f.n}`).join(', ') || 'none'} />
           </div>
