@@ -4,7 +4,7 @@ import { pickPages } from '../contacts/stage.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from '../fetch/client.js';
 import { firstH1 } from '../fetch/extract.js';
 import { RobotsCache } from '../fetch/robots.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { TechEngine, deferredScriptUrls } from '../tech/engine.js';
 import * as cheerio from 'cheerio';
 import { hasContactForm, hasReviews, lightAudit, summarize, vendorHosts, type AuditRules, type PageInfo, type Probes, type Tech } from './light.js';
@@ -20,7 +20,7 @@ export const auditPlan: StagePlan = {
   defaults: { batch: 100, snapshot: 2000 },
   async todoSql() {
     if (!(await datasetExists('classified')) || !(await datasetExists('tech'))) return null;
-    const done = (await datasetExists('audits')) ? `AND k.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('audits')}))` : '';
+    const done = (await datasetExists('audits')) ? `AND k.domain NOT IN (${currentSql({ dataset: 'audits', ts: 'audited_at' }, [{ dataset: 'classified', ts: 'classified_at' }, { dataset: 'tech', ts: 'analyzed_at' }])})` : '';
     return `
       WITH k AS (SELECT domain, arg_max(in_scope, classified_at) AS in_scope, arg_max(niche, classified_at) AS niche
                  FROM read_parquet(${datasetGlob('classified')}) GROUP BY domain),

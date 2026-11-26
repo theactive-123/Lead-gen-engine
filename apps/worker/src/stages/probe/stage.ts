@@ -2,7 +2,7 @@ import { datasetExists, datasetGlob, db, env, htmlFor, setting, sqlLiteral, with
 import { CrawlClient, HostLimiter, makeDispatcher, type FetchResult } from '../fetch/client.js';
 import { RobotsCache } from '../fetch/robots.js';
 import { errorKind } from '../fetch/stage.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { applyShopifyMeta, applyShopifyProducts, applyWooProducts, detectTheme, emptySummary, parseWpIndex } from './parse.js';
 
 /**
@@ -16,7 +16,7 @@ export const probePlan: StagePlan = {
   defaults: { batch: 200, snapshot: 2000 },
   async todoSql() {
     if (!(await datasetExists('pages'))) return null;
-    const done = (await datasetExists('store_probe')) ? `AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('store_probe')}))` : '';
+    const done = (await datasetExists('store_probe')) ? `AND domain NOT IN (${currentSql({ dataset: 'store_probe', ts: 'probed_at' }, [{ dataset: 'pages', ts: 'fetched_at', where: 'pass' }])})` : '';
     return `
       SELECT domain, max(priority) AS priority, arg_max(platform, fetched_at) AS platform,
              arg_max(final_url, fetched_at) AS final_url, arg_max(style_href, fetched_at) AS style_href

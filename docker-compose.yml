@@ -50,5 +50,31 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
 
+  # Nightly backup of the lead database (brands, segments, leads, do-not-contact list, export history)
+  # into data/backups; the last BACKUP_KEEP_DAYS days are kept. Restore steps: README → "Backups".
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-lead}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-lead}
+      PGDATABASE: ${POSTGRES_DB:-lead}
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - ./data/backups:/backups
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          f=/backups/lead-$$(date -u +%Y%m%d-%H%M).dump
+          if pg_dump -Fc -f "$$f.tmp" && mv "$$f.tmp" "$$f"; then echo "backup written: $$f"; else echo "backup FAILED"; fi
+          find /backups -name 'lead-*.tmp' -delete
+          find /backups -name 'lead-*.dump' -mtime +$$KEEP_DAYS -delete
+          sleep 86400
+        done
+
 volumes:
   pgdata:

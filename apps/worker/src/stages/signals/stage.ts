@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { datasetExists, datasetGlob, db, lakeQuery, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
 import { REGISTRY_FILE } from '../normalize.js';
 import { HostLimiter } from '../fetch/client.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { cleanCompanyName, computeSignals } from './compute.js';
 import { registrationDate } from './rdap.js';
 
@@ -12,7 +12,7 @@ export const signalsPlan: StagePlan = {
   defaults: { batch: 500, snapshot: 5000 },
   async todoSql() {
     if (!(await datasetExists('contacts')) || !existsSync(REGISTRY_FILE())) return null;
-    const done = (await datasetExists('signals')) ? `AND c.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('signals')}))` : '';
+    const done = (await datasetExists('signals')) ? `AND c.domain NOT IN (${currentSql({ dataset: 'signals', ts: 'computed_at' }, [{ dataset: 'contacts', ts: 'extracted_at' }])})` : '';
     const probe = (await datasetExists('store_probe'))
       ? `LEFT JOIN (SELECT domain, arg_max(product_count, probed_at) product_count, arg_max(last_published_at, probed_at) last_pub,
                           arg_max(newest_created_at, probed_at) newest_created, arg_max(country, probed_at) store_country,

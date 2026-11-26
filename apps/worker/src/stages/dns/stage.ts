@@ -1,6 +1,6 @@
 import { datasetExists, datasetGlob, db, lakeQuery, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
 import { REGISTRY_FILE } from '../normalize.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { dnsDoneSql, loadBatch, retryDays, type StagePlan } from '../plan.js';
 import { dohClient, udpClient, type DnsClient } from './resolver.js';
 import { existsSync } from 'node:fs';
 
@@ -25,7 +25,8 @@ export const dnsPlan: StagePlan = {
   },
   async todoSql() {
     if (!existsSync(REGISTRY_FILE())) return null;
-    const done = (await datasetExists('dns')) ? `AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('dns')}))` : '';
+    // Done = resolved, or failed and not due for a retry yet (recheck.retry_days after the first attempt, then given up).
+    const done = (await datasetExists('dns')) ? `AND domain NOT IN (${dnsDoneSql(await retryDays())})` : '';
     return `SELECT domain, priority FROM read_parquet(${sqlLiteral(REGISTRY_FILE())}) WHERE drop_reason IS NULL ${done}`;
   },
 };

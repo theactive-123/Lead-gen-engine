@@ -4,7 +4,7 @@ import { registrableDomain } from '../../sources/normalize.js';
 import { dohClient, udpClient } from '../dns/resolver.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from '../fetch/client.js';
 import { RobotsCache } from '../fetch/robots.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { emailType, extractContacts, type EmailType, type PageContacts } from './extract.js';
 
 /**
@@ -17,7 +17,7 @@ export const contactsPlan: StagePlan = {
   defaults: { batch: 100, snapshot: 2000 },
   async todoSql() {
     if (!(await datasetExists('classified'))) return null;
-    const done = (await datasetExists('contacts')) ? `AND k.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('contacts')}))` : '';
+    const done = (await datasetExists('contacts')) ? `AND k.domain NOT IN (${currentSql({ dataset: 'contacts', ts: 'extracted_at' }, [{ dataset: 'classified', ts: 'classified_at' }])})` : '';
     const probe = (await datasetExists('store_probe'))
       ? `LEFT JOIN (SELECT domain, arg_max(country, probed_at) AS store_country FROM read_parquet(${datasetGlob('store_probe')}) GROUP BY domain) s USING (domain)`
       : `LEFT JOIN (SELECT NULL::VARCHAR AS domain, NULL::VARCHAR AS store_country) s USING (domain)`;

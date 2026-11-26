@@ -1,4 +1,4 @@
-import { QUEUES, closeDb, db, ensureQueue, env, logger, migrate, queue, refreshSegments, stopQueue } from '@lead/shared';
+import { QUEUES, closeDb, db, ensureQueue, env, logger, migrate, queue, refreshSegments, stopQueue, withLock } from '@lead/shared';
 import { SOURCES } from './sources/index.js';
 import { runSource } from './sources/runner.js';
 import { cleanup } from './stages/cleanup.js';
@@ -18,6 +18,8 @@ import { buildExport, dailyExports } from './stages/export/build.js';
 import { beat, diskUsage, fingerprintInfo, heartbeat, lakeSelftest } from './jobs/system.js';
 import { FINGERPRINTS_DIR, TechEngine } from './stages/tech/engine.js';
 import { funnel, sourceHealth } from './jobs/funnel.js';
+import { HEAVY_LOCK, compactLake, forgetDomains } from './jobs/lake-maintenance.js';
+import { dailyReport } from './jobs/report.js';
 
 /**
  * Worker process: applies migrations, connects to the queue, registers job handlers
@@ -102,7 +104,11 @@ await ensureQueue(boss, 'exports.daily', { exclusive: true, expireInSeconds: 3 *
 await ensureQueue(boss, 'system.cleanup', { exclusive: true, expireInSeconds: 3600 });
 await ensureQueue(boss, 'system.funnel', { exclusive: true, expireInSeconds: 1800 });
 await ensureQueue(boss, 'system.source-health', { exclusive: true, expireInSeconds: 600 });
-await boss.work('stage.normalize', logged('stage.normalize', () => normalize()));
+await ensureQueue(boss, 'system.forget', { exclusive: true, expireInSeconds: 3600 });
+await ensureQueue(boss, 'system.compact', { exclusive: true, expireInSeconds: 3 * 3600 });
+await ensureQueue(boss, 'system.daily-report', { exclusive: true, expireInSeconds: 1800 });
+// Heavy data-lake jobs take one shared lock: never two at once (shared DuckDB memory, and they rewrite files).
+await boss.work('stage.normalize', logged('stage.normalize', () => withLock(HEAVY_LOCK, () => normalize())));
 // Each stage is planned on its own: one failing stage (logged with its name) must not block the others.
 const plans = [dnsPlan, fetchPlan, techPlan, probePlan, classifyPlan, contactsPlan, signalsPlan, auditPlan, lighthousePlan];
 await boss.work('stage.plan', logged('stage.plan', async () => {
@@ -135,7 +141,10 @@ await boss.work<{ id?: number }>('segments.refresh', logged<{ id?: number }>('se
 await boss.work<{ id: number }>('exports.build', { localConcurrency: 1 }, logged<{ id: number }>('exports.build', (d) => buildExport(d.id)));
 await boss.work('exports.daily', logged('exports.daily', () => dailyExports()));
 await boss.work('system.cleanup', logged('system.cleanup', () => cleanup()));
-await boss.work('system.funnel', logged('system.funnel', () => funnel()));
+await boss.work('system.funnel', logged('system.funnel', () => withLock(HEAVY_LOCK, () => funnel())));
+await boss.work('system.forget', logged('system.forget', () => forgetDomains()));
+await boss.work('system.compact', logged('system.compact', () => compactLake()));
+await boss.work('system.daily-report', logged('system.daily-report', () => dailyReport()));
 await boss.work('system.source-health', logged('system.source-health', () => sourceHealth()));
 await boss.schedule('stage.normalize', '*/15 * * * *');
 await boss.schedule('stage.plan', '* * * * *');
@@ -145,6 +154,9 @@ await boss.schedule('segments.refresh', '17 3 * * *');
 await boss.schedule('exports.daily', '13 5 * * *');
 await boss.schedule('system.funnel', '43 * * * *');
 await boss.schedule('system.source-health', '29 * * * *');
+await boss.schedule('system.forget', '*/30 * * * *');
+await boss.schedule('system.compact', '41 4 * * *');
+await boss.schedule('system.daily-report', '3 6 * * *');
 
 // Recurring jobs (cron, UTC). pg-boss makes sure only one worker runs each tick.
 await boss.schedule(QUEUES.heartbeat, '* * * * *');

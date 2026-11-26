@@ -1,5 +1,5 @@
 import { datasetExists, datasetGlob, db, htmlFor, setting, withRun, writeParquet } from '@lead/shared';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { TechEngine } from './engine.js';
 import { TechPool } from './pool.js';
 
@@ -12,7 +12,8 @@ export const techPlan: StagePlan = {
   defaults: { batch: 200, snapshot: 4000 },
   async todoSql() {
     if (!(await datasetExists('pages')) || !(await datasetExists('html'))) return null;
-    const done = (await datasetExists('tech')) ? `AND p.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('tech')}))` : '';
+    // Done = analysed after the newest usable page (a re-crawled page is analysed again).
+    const done = (await datasetExists('tech')) ? `AND p.domain NOT IN (${currentSql({ dataset: 'tech', ts: 'analyzed_at' }, [{ dataset: 'pages', ts: 'fetched_at', where: 'pass' }])})` : '';
     // Only pages whose HTML is still stored (kept a few days).
     return `
       SELECT p.domain, max(p.priority) AS priority
@@ -26,7 +27,7 @@ export const techPlan: StagePlan = {
 export async function techBacklog(): Promise<number> {
   if (!(await datasetExists('pages'))) return 0;
   const { lakeQuery } = await import('@lead/shared');
-  const done = (await datasetExists('tech')) ? `AND domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('tech')}))` : '';
+  const done = (await datasetExists('tech')) ? `AND domain NOT IN (${currentSql({ dataset: 'tech', ts: 'analyzed_at' }, [{ dataset: 'pages', ts: 'fetched_at', where: 'pass' }])})` : '';
   const [r] = await lakeQuery<{ n: bigint }>(`SELECT count(DISTINCT domain) AS n FROM read_parquet(${datasetGlob('pages')}, union_by_name = true) WHERE pass ${done}`);
   return Number(r?.n ?? 0);
 }

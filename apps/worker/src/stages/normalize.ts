@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { glob, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { datasetGlob, lakeDir, lakeQuery, lakeRun, setting, sqlLiteral, withRun } from '@lead/shared';
+import { datasetGlob, db, lakeDir, lakeQuery, lakeRun, setting, sqlLiteral, withRun } from '@lead/shared';
 
 /**
  * Stage 1 — normalise & de-duplicate.
@@ -95,7 +95,8 @@ export function mergeIntoSql(base: string, fresh: string): string {
 }
 
 /** Add tld, drop_reason and priority to base rows using the editable rules. */
-export function deriveSql(base: string, r: NormalizeRules): string {
+/** `suppressed`: domains on the do-not-contact list — kept in the registry only as "suppressed", never crawled again. */
+export function deriveSql(base: string, r: NormalizeRules, suppressed: string[] = []): string {
   // Best source wins (not the first listed): a Common Crawl shop that also gets a new certificate
   // must not fall to the CT score. Key order in the jsonb setting is not the order it was written in.
   const priorityBySource = ['0', ...Object.entries(r.base_priority)
@@ -110,6 +111,7 @@ export function deriveSql(base: string, r: NormalizeRules): string {
   SELECT domain, first_seen, sources, cc_ecommerce, cc_wellness, cc_agency, cc_pages, cc_lang,
     tranco_rank, registered, ct_first_cert, tld,
     CASE
+      ${suppressed.length ? `WHEN domain IN (SELECT unnest(${list(suppressed)})) THEN 'suppressed'` : ''}
       WHEN list_contains(${list(r.blocked_tlds)}, tld) THEN 'blocked_tld'
       WHEN length(label) > ${Number(r.junk_max_label_length)} THEN 'junk_long_label'
       WHEN length(label) >= 6 AND length(regexp_replace(label, '[^0-9]', '', 'g')) / length(label) > ${Number(r.junk_max_digit_ratio)} THEN 'junk_digits'
@@ -187,7 +189,8 @@ export async function normalize(): Promise<Record<string, unknown>> {
       const name = `registry-${stamp}.parquet`;
       const tmp = path.join(dir, `${name}.tmp`);
       temps.push(tmp);
-      await lakeRun(`COPY (${deriveSql(base, rules)} ORDER BY priority DESC, domain) TO ${sqlLiteral(tmp)} (FORMAT parquet, COMPRESSION zstd)`);
+      const suppressed = (await db().query<{ value: string }>(`SELECT value FROM suppression WHERE kind = 'domain'`)).rows.map((x) => x.value);
+      await lakeRun(`COPY (${deriveSql(base, rules, suppressed)} ORDER BY priority DESC, domain) TO ${sqlLiteral(tmp)} (FORMAT parquet, COMPRESSION zstd)`);
       await rename(tmp, path.join(dir, name));
       // Switch the pointer atomically. If we crash before the file list is saved, those files are
       // merged again next run (harmless, see mergeSql).

@@ -53,6 +53,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       SELECT s.key, s.label, s.enabled, r.status, r.started_at, r.out_count FROM sources s
       LEFT JOIN LATERAL (SELECT status, started_at, out_count FROM runs WHERE stage = 'source.' || s.key ORDER BY started_at DESC LIMIT 1) r ON true ORDER BY s.key`),
   ]);
+  const [report] = await q<{ value: { volume: { per_day: number; projected_per_month: number; target: number; on_track: boolean };
+    bottleneck: { stage: string; todo: number; days_to_clear: number | null } | null; failed_jobs: { name: string; n: number }[] }; measured_at: Date }>(
+    `SELECT value, measured_at FROM system_metrics WHERE metric = 'report' ORDER BY id DESC LIMIT 1`);
   const all = bySource.find((r) => r.source === 'all');
   const perSource = bySource.filter((r) => r.source !== 'all');
   const backlog = all && all.kept > 0 && all.dns_checked < all.kept * 0.5;
@@ -67,6 +70,18 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         ))}
       />
 
+      {report && (
+        <Card title={<>Daily report <span className="ml-1 text-xs font-normal text-neutral-500">{ago(report.measured_at)} · last 24 hours</span></>}>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Stat label="New domains per day" value={fmt(report.value.volume.per_day)}
+              sub={<>≈ {fmt(report.value.volume.projected_per_month)} per month · target {fmt(report.value.volume.target)} {report.value.volume.on_track ? '✓' : '— below target'}</>} />
+            <Stat label="Bottleneck" value={report.value.bottleneck?.stage ?? 'none'}
+              sub={report.value.bottleneck ? <>{fmt(report.value.bottleneck.todo)} waiting · ~{report.value.bottleneck.days_to_clear ?? '?'} days at current speed</> : 'every stage keeps up'} />
+            <Stat label="Failed jobs (24 h)" value={fmt(report.value.failed_jobs.reduce((n, f) => n + f.n, 0))}
+              sub={report.value.failed_jobs.map((f) => `${f.name} ${f.n}`).join(', ') || 'none'} />
+          </div>
+        </Card>
+      )}
       {!all && <Notice tone="amber">No funnel numbers for this period yet. The worker counts them every hour (job <code>system.funnel</code>).</Notice>}
       {all && (
         <Card title="Funnel">

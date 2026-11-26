@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { datasetExists, datasetGlob, db, lakeQuery, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
 import { REGISTRY_FILE } from '../normalize.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { currentSql, loadBatch, type StagePlan } from '../plan.js';
 import { PROBE_PLATFORMS } from '../probe/stage.js';
 import { Classifier, type Taxonomy } from './engine.js';
 
@@ -21,8 +21,11 @@ export const classifyPlan: StagePlan = {
     const hasProbe = await datasetExists('store_probe');
     // "Re-classify all" (dashboard → Niches) sets classify.reclassify_after: anything classified before it is done again.
     const after = new Date(String(await setting<string | null>('classify.reclassify_after', null) ?? 0));
-    const since = Number.isFinite(after.getTime()) && after.getTime() > 0 ? ` WHERE classified_at >= TIMESTAMP '${after.toISOString().replace('T', ' ').replace('Z', '')}'` : '';
-    const done = (await datasetExists('classified')) ? `AND p.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('classified')})${since})` : '';
+    const since = Number.isFinite(after.getTime()) && after.getTime() > 0 ? `TIMESTAMP '${after.toISOString().replace('T', ' ').replace('Z', '')}'` : undefined;
+    // Done = classified after the newest technology result, store probe and "re-classify all".
+    const done = (await datasetExists('classified'))
+      ? `AND p.domain NOT IN (${currentSql({ dataset: 'classified', ts: 'classified_at' }, [{ dataset: 'tech', ts: 'analyzed_at' }, ...(hasProbe ? [{ dataset: 'store_probe', ts: 'probed_at' }] : [])], since)})`
+      : '';
     const probeJoin = hasProbe
       ? `LEFT JOIN (SELECT domain, arg_max(ok, probed_at) AS ok, arg_max(product_count, probed_at) AS product_count,
                           arg_max(count_method, probed_at) AS count_method, arg_max(sample_titles, probed_at) AS sample_titles,

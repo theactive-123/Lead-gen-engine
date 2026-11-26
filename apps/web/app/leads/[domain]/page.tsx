@@ -181,7 +181,7 @@ export default async function LeadPage({ params, searchParams }: { params: Promi
       <Card title="Delete this lead">
         <form action={deleteLead} className="flex items-center justify-between gap-4">
           <input type="hidden" name="domain" value={lead.domain} />
-          <p className="text-sm text-neutral-600">Removes this lead and its contacts from the lead database and adds the domain (and its email) to the do-not-contact list.</p>
+          <p className="text-sm text-neutral-600">Removes this lead everywhere (lead database and raw data), and adds the domain and its email to the do-not-contact list so it is never crawled or contacted again.</p>
           <Submit className={btn.danger} pending="Deleting…" confirm={`Delete ${lead.domain} and never contact it?`}>Delete and suppress</Submit>
         </form>
       </Card>

@@ -1,6 +1,8 @@
 import { QUEUES, closeDb, countSegment, db, queue, refreshSegments, stopQueue } from '@lead/shared';
 import { runScoring } from './stages/score/stage.js';
 import { funnel } from './jobs/funnel.js';
+import { buildReport, reportText } from './jobs/report.js';
+import { compactLake, forgetDomains } from './jobs/lake-maintenance.js';
 import { buildExport } from './stages/export/build.js';
 import { SOURCES } from './sources/index.js';
 import { runSource } from './sources/runner.js';
@@ -26,6 +28,9 @@ import { lighthousePlan } from './stages/lighthouse/stage.js';
  *   pnpm jobs plan                          -> plan batches for every pipeline stage now
  *   pnpm jobs score [full]                  -> score leads for every brand now (full = every lead)
  *   pnpm jobs export <brand_key> [csv|xlsx] [new|all] [tiers=AB] [segment_id]  -> write an export file now
+ *   pnpm jobs report [days]                 -> volume, funnel, speed, backlog and bottleneck (default 7 days)
+ *   pnpm jobs compact                       -> merge small data-lake files now
+ *   pnpm jobs forget                        -> remove deleted leads from the data lake now
  *   pnpm jobs funnel                        -> recount the dashboard funnel now
  *   pnpm jobs segments [id]                 -> refresh saved segment members now
  *   pnpm jobs count <brand_key> '<filter json>'  -> live count of a segment filter
@@ -33,7 +38,13 @@ import { lighthousePlan } from './stages/lighthouse/stage.js';
 const [cmd, name, json] = process.argv.slice(2);
 const boss = await queue();
 
-if (cmd === 'export' && name) {
+if (cmd === 'report') {
+  console.log(reportText(await buildReport(Number(name) || 7)));
+} else if (cmd === 'compact') {
+  console.log(await compactLake());
+} else if (cmd === 'forget') {
+  console.log(await forgetDomains());
+} else if (cmd === 'export' && name) {
   const [format = 'xlsx', mode = 'new', tiers = 'AB', segment] = process.argv.slice(4);
   const { rows } = await db().query<{ id: number }>(
     `INSERT INTO exports (brand_id, segment_id, segment_name, tiers, format, mode, requested_by)

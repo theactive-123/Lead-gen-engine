@@ -79,3 +79,12 @@ describe('registry (normalize)', () => {
     expect(rows.find((r) => r.domain === '1234567890ab.com')!.drop_reason).toBe('junk_digits');
   });
 });
+
+describe('do-not-contact domains in the registry', () => {
+  it('a suppressed domain is marked "suppressed" (never crawled again), others are untouched', async () => {
+    const rows = await q(n.deriveSql(n.aggregateSql(read(files)), rules, ['shop.com']));
+    const by = Object.fromEntries(rows.map((r) => [r.domain, r.drop_reason]));
+    expect(by['shop.com']).toBe('suppressed');
+    expect(by['big.com']).toBeNull();
+  });
+});

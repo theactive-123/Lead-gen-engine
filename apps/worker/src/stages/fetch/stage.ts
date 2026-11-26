@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { datasetExists, datasetGlob, db, env, logger, setting, sqlLiteral, withRun, writeParquet } from '@lead/shared';
 import { registrableDomain } from '../../sources/normalize.js';
 import { REGISTRY_FILE } from '../normalize.js';
-import { loadBatch, type StagePlan } from '../plan.js';
+import { fetchDoneSql, loadBatch, retryDays, type StagePlan } from '../plan.js';
 import { loadSignatures, matchSignatures } from '../dns/stage.js';
 import { CrawlClient, HostLimiter, makeDispatcher } from './client.js';
 import { extractFeatures, type PageFeatures } from './extract.js';
@@ -27,12 +27,18 @@ export const fetchPlan: StagePlan = {
   },
   async todoSql() {
     if (!(await datasetExists('dns')) || !existsSync(REGISTRY_FILE())) return null;
-    const done = (await datasetExists('pages')) ? `AND d.domain NOT IN (SELECT domain FROM read_parquet(${datasetGlob('pages')}))` : '';
+    const done = (await datasetExists('pages')) ? `AND d.domain NOT IN (${fetchDoneSql({
+      days: await retryDays(),
+      inNicheDays: Number(await setting('recheck.in_niche_days', 30)),
+      finalStatuses: await setting<string[]>('recheck.final_statuses', ['robots_disallowed', 'offsite_redirect']),
+      hasClassified: await datasetExists('classified'),
+    })})` : '';
     return `
       SELECT d.domain, r.priority, len(d.a) > 0 AS apex_ok, d.a, d.www_cname, d.www_a, d.mx, d.ns,
              r.first_seen, r.sources
-      FROM read_parquet(${datasetGlob('dns')}) d JOIN read_parquet(${sqlLiteral(REGISTRY_FILE())}) r USING (domain)
-      WHERE d.pass ${done}`;
+      FROM (SELECT * FROM read_parquet(${datasetGlob('dns')}) QUALIFY row_number() OVER (PARTITION BY domain ORDER BY resolved_at DESC) = 1) d
+        JOIN read_parquet(${sqlLiteral(REGISTRY_FILE())}) r USING (domain)
+      WHERE d.pass AND r.drop_reason IS NULL ${done}`;
   },
 };
 

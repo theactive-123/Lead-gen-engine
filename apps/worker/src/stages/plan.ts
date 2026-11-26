@@ -1,6 +1,6 @@
 import { mkdir, rename, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
-import { ensureQueue, getCheckpoint, lakeDir, lakeQuery, lakeRun, logger, queue, setCheckpoint, setting, sqlLiteral } from '@lead/shared';
+import { datasetGlob as datasetGlobFor, ensureQueue, getCheckpoint, lakeDir, lakeQuery, lakeRun, logger, queue, setCheckpoint, setting, sqlLiteral } from '@lead/shared';
 
 /**
  * Work planner shared by the batch stages (dns, fetch, ...).
@@ -87,4 +87,62 @@ export async function planStage(plan: StagePlan): Promise<{ planned: number; bat
 /** Rows of one batch of a snapshot. */
 export async function loadBatch<T = Record<string, unknown>>(stage: string, snapshot: string, batch: number): Promise<T[]> {
   return lakeQuery<T>(`SELECT * FROM read_parquet(${sqlLiteral(snapshotFile(stage, snapshot))}) WHERE batch = ${Number(batch)}`);
+}
+
+const EPOCH = `TIMESTAMP '1970-01-01'`;
+
+/**
+ * Domains whose result in `out` is still current: produced after the newest of its inputs.
+ * Used by every stage instead of "has a result": when a page is fetched again (monthly re-crawl,
+ * retry), each later stage redoes that domain in order (tech after the new page, niche after the new tech…).
+ * An input a domain does not have (e.g. no store probe) never makes it stale.
+ */
+export function currentSql(out: { dataset: string; ts: string }, inputs: { dataset: string; ts: string; where?: string }[], extraSince?: string): string {
+  const joins = inputs.map((i, n) =>
+    `LEFT JOIN (SELECT domain, max(${i.ts}) AS t FROM read_parquet(${datasetGlobFor(i.dataset)}, union_by_name = true) ${i.where ? `WHERE ${i.where}` : ''} GROUP BY 1) i${n} USING (domain)`).join('\n      ');
+  const newest = [...inputs.map((_, n) => `coalesce(i${n}.t, ${EPOCH})`), ...(extraSince ? [extraSince] : []), EPOCH].join(', ');
+  return `
+    SELECT o.domain FROM (SELECT domain, max(${out.ts}) AS t FROM read_parquet(${datasetGlobFor(out.dataset)}, union_by_name = true) GROUP BY 1) o
+      ${joins}
+    WHERE o.t >= greatest(${newest})`;
+}
+
+/** Re-check schedule (days after the first attempt) for domains with no usable site yet: setting recheck.retry_days. */
+export async function retryDays(): Promise<number[]> {
+  const d = await setting<number[]>('recheck.retry_days', [7, 21, 45]);
+  return Array.isArray(d) ? d.map(Number).filter((x) => x > 0) : [7, 21, 45];
+}
+
+/** SQL CASE: the day offset of the next retry after `n` attempts (NULL = no more retries). */
+export function nextRetrySql(n: string, days: number[]): string {
+  return days.length ? `CASE ${days.map((d, i) => `WHEN ${n} = ${i + 1} THEN ${Number(d)}`).join(' ')} ELSE NULL END` : 'NULL';
+}
+
+const NOW_UTC = `(now() AT TIME ZONE 'UTC')`;
+
+/** DNS: done = resolved, or failed and not due for a retry yet (or out of retries). */
+export function dnsDoneSql(days: number[]): string {
+  const next = nextRetrySql('n', days);
+  return `SELECT domain FROM (SELECT domain, min(resolved_at) AS first, count(*) AS n, arg_max(pass, resolved_at) AS ok
+                               FROM read_parquet(${datasetGlobFor('dns')}) GROUP BY 1)
+          WHERE ok OR ${next} IS NULL OR ${NOW_UTC} < first + to_days(CAST(${next} AS INTEGER))`;
+}
+
+/**
+ * Homepage fetch: done = a usable page that is fresh enough, or a failure that is final / not due for a retry.
+ *  - in-niche sites are fetched again after `inNicheDays` (monthly re-crawl);
+ *  - no usable page (timeout, error, parked, coming soon…): retried on the `days` schedule;
+ *  - `finalStatuses` (robots.txt refusal, redirect to another domain) are never retried.
+ */
+export function fetchDoneSql(o: { days: number[]; inNicheDays: number; finalStatuses: string[]; hasClassified: boolean }): string {
+  const next = nextRetrySql('n', o.days);
+  const finals = o.finalStatuses.length ? o.finalStatuses.map(sqlLiteral).join(', ') : `''`;
+  const inScope = o.hasClassified
+    ? `SELECT domain FROM read_parquet(${datasetGlobFor('classified')}) GROUP BY 1 HAVING arg_max(in_scope, classified_at)`
+    : `SELECT NULL::VARCHAR AS domain WHERE false`;
+  return `SELECT domain FROM (SELECT domain, min(fetched_at) AS first, max(fetched_at) AS last, count(*) AS n,
+                                     arg_max(pass, fetched_at) AS ok, arg_max(fetch_status, fetched_at) AS status
+                              FROM read_parquet(${datasetGlobFor('pages')}, union_by_name = true) GROUP BY 1)
+          WHERE (ok AND (domain NOT IN (${inScope}) OR last >= ${NOW_UTC} - to_days(${Number(o.inNicheDays)})))
+             OR (NOT coalesce(ok, false) AND (status IN (${finals}) OR ${next} IS NULL OR ${NOW_UTC} < first + to_days(CAST(${next} AS INTEGER))))`;
 }
